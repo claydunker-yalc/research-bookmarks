@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://research-bookmarks-api.onrender.com';
 
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
