@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Bookmarks</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Research Bookmarks</h1>
+            <p class="subtitle">Save and search articles by meaning</p>
+            <nav class="tab-nav">
+                <button class="tab-btn active" data-tab="main">Articles</button>
+                <button class="tab-btn" data-tab="features">Features</button>
+            </nav>
+        </header>
+
+        <!-- Main Tab Content -->
+        <div id="main-tab" class="tab-content active">
+
+        <section class="search-section">
+            <form id="search-form">
+                <input
+                    type="text"
+                    id="search-input"
+                    placeholder="Search by concept (e.g., 'AI in education')"
+                >
+                <button type="submit">Search</button>
+            </form>
+            <button id="show-all-btn" class="secondary">Show All Articles</button>
+        </section>
+
+        <section class="add-section">
+            <div class="add-header">
+                <h2>Add New Article</h2>
+                <button type="button" id="toggle-manual" class="toggle-btn">Manual Entry</button>
+            </div>
+
+            <form id="add-form">
+                <input
+                    type="url"
+                    id="url-input"
+                    placeholder="Paste article URL here"
+                    required
+                >
+                <button type="submit">Save Article</button>
+            </form>
+
+            <form id="manual-form" class="manual-form hidden">
+                <input
+                    type="url"
+                    id="manual-url"
+                    placeholder="Article URL"
+                    required
+                >
+                <input
+                    type="text"
+                    id="manual-title"
+                    placeholder="Article title"
+                    required
+                >
+                <textarea
+                    id="manual-content"
+                    placeholder="Paste the article text here..."
+                    rows="6"
+                    required
+                ></textarea>
+                <button type="submit">Save Manual Entry</button>
+            </form>
+
+            <div id="add-status" class="status"></div>
+        </section>
+
+        <section class="results-section">
+            <h2 id="results-heading">Recent Articles</h2>
+            <div id="results" class="results-grid"></div>
+            <div id="loading" class="loading hidden">Loading...</div>
+            <div id="error" class="error hidden"></div>
+        </section>
+
+        </div><!-- End Main Tab -->
+
+        <!-- Features Tab Content -->
+        <div id="features-tab" class="tab-content">
+            <section class="features-section">
+                <h2>App Features</h2>
+
+                <div class="feature-card">
+                    <h3>Semantic Search</h3>
+                    <p>Search your bookmarks by meaning, not just keywords. Ask questions like "articles about AI in education" and find relevant results even if those exact words don't appear in the article.</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Auto-Extract & Summarize</h3>
+                    <p>Paste any article URL and the app automatically extracts the content, generates an AI-powered summary, and stores it for future reference.</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Manual Entry</h3>
+                    <p>For paywalled or scraper-resistant sites, use Manual Entry to paste the article text directly. The app will still generate summaries and enable semantic search.</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Research Synthesis</h3>
+                    <p>Select multiple articles from search results and synthesize them into a research brief. Get an executive summary, key insights, notable quotes, points of agreement/tension, and an MLA-formatted bibliography.</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Export for NotebookLM</h3>
+                    <p>Copy selected articles to clipboard or download as a text file. Perfect for importing into NotebookLM or other research tools.</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Email Digest</h3>
+                    <p>Receive an AI-generated email every 3 days with a summary of your recent bookmarks and 2-3 older articles resurfaced for rediscovery. (Requires Resend API configuration)</p>
+                </div>
+
+                <div class="feature-card">
+                    <h3>Duplicate Detection</h3>
+                    <p>The app automatically detects if you've already saved an article, preventing duplicates in your collection.</p>
+                </div>
+            </section>
+        </div><!-- End Features Tab -->
+
+        <!-- Synthesis Result Modal -->
+        <div id="synthesis-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Research Synthesis</h2>
+                    <button id="close-modal" class="close-btn">&times;</button>
+                </div>
+                <div id="synthesis-result" class="synthesis-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Synthesis Bar (fixed at bottom) -->
+    <div id="synthesis-bar" class="synthesis-bar hidden">
+        <div class="synthesis-bar-content">
+            <span id="selected-count">0 articles selected</span>
+            <div class="synthesis-bar-actions">
+                <input
+                    type="text"
+                    id="focus-topic"
+                    placeholder="Focus topic (e.g., 'oral exams in the age of AI')"
+                >
+                <button id="synthesize-btn">Synthesize</button>
+                <div class="export-group">
+                    <button id="copy-clipboard-btn" class="export-btn" title="Copy to clipboard">Copy</button>
+                    <button id="download-btn" class="export-btn" title="Download as file">Download</button>
+                </div>
+                <button id="clear-selection" class="secondary">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
