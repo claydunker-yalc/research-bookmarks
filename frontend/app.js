@@ -284,6 +284,7 @@ function renderArticles(articles, isSearch = false) {
 
 async function loadAllArticles() {
     showLoading();
+    loadingEl.innerHTML = 'Loading articles<br><small style="color: #888;">(first load may take ~30s while server wakes up)</small>';
     resultsHeading.textContent = 'Recent Articles';
     resultsSection.classList.remove('search-mode');
     isSearchMode = false;
@@ -291,14 +292,24 @@ async function loadAllArticles() {
     updateSynthesisBar();
 
     try {
-        const response = await fetch(`${API_URL}/articles`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+        const response = await fetch(`${API_URL}/articles`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
         if (!response.ok) throw new Error('Failed to load articles');
 
         const articles = await response.json();
         renderArticles(articles, false);
     } catch (err) {
-        showError('Failed to load articles. Is the backend running?');
+        if (err.name === 'AbortError') {
+            showError('Request timed out. The server may be starting up - please try again in a moment.');
+        } else {
+            showError('Failed to load articles. Please refresh to try again.');
+        }
     } finally {
+        loadingEl.textContent = 'Loading...';
         hideLoading();
     }
 }
