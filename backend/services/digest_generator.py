@@ -12,19 +12,20 @@ from .quote_clusterer import get_cluster_for_digest
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
-def generate_curator_digest(quotes_with_articles: list[dict], relaxed: bool = True) -> dict | None:
+def generate_curator_digest(quotes_with_articles: list[dict], relaxed: bool = True, excluded_anchor_ids: set[str] = None) -> dict | None:
     """
     Generate a curator's pick email from quote clusters.
 
     Args:
         quotes_with_articles: All quotes with article metadata
         relaxed: If True, don't require 2+ month old anchor (for new libraries)
+        excluded_anchor_ids: Quote IDs to exclude as anchors (recently used)
 
     Returns:
-        dict with 'subject' and 'html_body', or None if no good cluster
+        dict with 'subject', 'html_body', and cluster metadata, or None if no good cluster
     """
-    # Find the best quote cluster
-    cluster = get_cluster_for_digest(quotes_with_articles, relaxed=relaxed)
+    # Find a quote cluster, avoiding recently used anchors
+    cluster = get_cluster_for_digest(quotes_with_articles, relaxed=relaxed, excluded_anchor_ids=excluded_anchor_ids)
 
     if not cluster:
         return None
@@ -90,14 +91,14 @@ TENSION: [One sentence about what question or tension these quotes raise togethe
         )
 
         response = message.content[0].text.strip()
-        return _parse_curator_response(response, anchor, recent)
+        return _parse_curator_response(response, anchor, recent, cluster)
 
     except Exception as e:
         print(f"Digest generation failed: {e}")
         return None
 
 
-def _parse_curator_response(response: str, anchor: dict, recent: list[dict]) -> dict:
+def _parse_curator_response(response: str, anchor: dict, recent: list[dict], cluster: dict) -> dict:
     """Parse Claude's response into email components."""
 
     def extract_field(text: str, field: str) -> str:
@@ -154,7 +155,11 @@ def _parse_curator_response(response: str, anchor: dict, recent: list[dict]) -> 
         "html_body": html_body,
         "theme": theme,
         "anchor_article": anchor_source,
-        "recent_count": len(recent_quotes)
+        "recent_count": len(recent_quotes),
+        # Include IDs for history tracking
+        "anchor_quote_id": anchor.get('id'),
+        "anchor_article_id": anchor.get('article_id'),
+        "cluster_quote_ids": [q['id'] for q in cluster.get('quotes', [])] if cluster else []
     }
 
 

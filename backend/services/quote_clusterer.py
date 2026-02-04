@@ -152,21 +152,42 @@ def find_quote_clusters(
     return clusters
 
 
-def get_cluster_for_digest(quotes: list[dict], relaxed: bool = False) -> dict | None:
+def get_cluster_for_digest(quotes: list[dict], relaxed: bool = False, excluded_anchor_ids: set[str] = None) -> dict | None:
     """
-    Get the best cluster for today's digest email.
+    Get a cluster for today's digest email, avoiding recently used anchors.
 
     Args:
         quotes: List of quote dicts with embeddings and article metadata
         relaxed: If True, don't require 2+ month old anchor (for testing new libraries)
+        excluded_anchor_ids: Set of quote IDs to exclude as anchors (recently used)
 
-    Returns the most developed cluster that meets all criteria,
-    or None if no suitable cluster exists.
+    Returns a suitable cluster, rotating through options to provide variety.
     """
+    import random
+
     clusters = find_quote_clusters(quotes, require_old_anchor=not relaxed)
 
     if not clusters:
         return None
 
-    # Return the best cluster (most quotes/articles)
-    return clusters[0]
+    excluded_anchor_ids = excluded_anchor_ids or set()
+
+    # Filter out clusters whose anchors were recently used
+    available_clusters = [
+        c for c in clusters
+        if c['anchor_quote']['id'] not in excluded_anchor_ids
+    ]
+
+    # If all clusters were recently used, reset and allow any
+    if not available_clusters:
+        available_clusters = clusters
+
+    # Pick randomly from the top clusters (weighted toward better ones)
+    # Take top 3 clusters and pick one randomly
+    top_clusters = available_clusters[:min(3, len(available_clusters))]
+
+    # Weight toward the first (best) cluster but allow variety
+    weights = [3, 2, 1][:len(top_clusters)]
+    selected = random.choices(top_clusters, weights=weights, k=1)[0]
+
+    return selected

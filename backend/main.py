@@ -22,7 +22,9 @@ from database import (
     get_all_quotes_with_articles,
     get_quote_count,
     get_articles_without_quotes,
-    article_has_quotes
+    article_has_quotes,
+    get_recent_digest_anchor_ids,
+    save_digest_history
 )
 from services import (
     extract_article,
@@ -74,9 +76,21 @@ def send_scheduled_digest():
             print("No quotes available for digest, skipping")
             return
 
-        digest = generate_curator_digest(quotes)
+        # Get recently used anchor IDs to avoid repetition
+        excluded_anchors = get_recent_digest_anchor_ids(days=7)
+
+        digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
         if digest:
             send_digest_email(digest["subject"], digest["html_body"])
+
+            # Save to history to avoid repeating this theme
+            save_digest_history(
+                theme=digest.get("theme"),
+                anchor_quote_id=digest.get("anchor_quote_id"),
+                anchor_article_id=digest.get("anchor_article_id"),
+                cluster_quote_ids=digest.get("cluster_quote_ids", [])
+            )
+
             print(f"Curator digest sent: theme='{digest.get('theme')}', anchor='{digest.get('anchor_article')}'")
         else:
             print("No suitable quote cluster found for digest")
@@ -402,11 +416,14 @@ async def preview_digest():
             "total_quotes": 0
         }
 
-    digest = generate_curator_digest(quotes)
+    # Get recently used anchor IDs to show what would be picked next
+    excluded_anchors = get_recent_digest_anchor_ids(days=7)
+
+    digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
 
     if not digest:
         return {
-            "message": "No suitable quote cluster found. Need 5+ related quotes from 3+ articles, with at least one quote 2+ months old.",
+            "message": "No suitable quote cluster found. Need 5+ related quotes from 3+ articles.",
             "total_quotes": len(quotes)
         }
 
@@ -437,15 +454,27 @@ async def send_digest():
             detail="No quotes available. Run POST /quotes/backfill to extract quotes from existing articles."
         )
 
-    digest = generate_curator_digest(quotes)
+    # Get recently used anchor IDs to avoid repetition
+    excluded_anchors = get_recent_digest_anchor_ids(days=7)
+
+    digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
     if not digest:
         raise HTTPException(
             status_code=400,
-            detail="No suitable quote cluster found. Need 5+ related quotes from 3+ articles, with at least one 2+ months old."
+            detail="No suitable quote cluster found. Need 5+ related quotes from 3+ articles."
         )
 
     try:
         result = send_digest_email(digest["subject"], digest["html_body"])
+
+        # Save to history to avoid repeating this theme
+        save_digest_history(
+            theme=digest.get("theme"),
+            anchor_quote_id=digest.get("anchor_quote_id"),
+            anchor_article_id=digest.get("anchor_article_id"),
+            cluster_quote_ids=digest.get("cluster_quote_ids", [])
+        )
+
         return {
             "success": True,
             "message": f"Curator's pick sent: '{digest.get('theme')}'",

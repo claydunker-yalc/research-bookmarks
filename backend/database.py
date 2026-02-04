@@ -198,3 +198,38 @@ def get_articles_without_quotes() -> list[dict]:
 
     # Filter to those without quotes
     return [a for a in articles_result.data if a['id'] not in articles_with_quotes]
+
+
+# Digest history functions
+
+def get_recent_digest_anchor_ids(days: int = 7) -> set[str]:
+    """Get anchor quote IDs used in recent digests to avoid repetition."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    try:
+        result = (
+            supabase.table("digest_history")
+            .select("anchor_quote_id")
+            .gte("sent_at", cutoff)
+            .execute()
+        )
+        return set(r['anchor_quote_id'] for r in result.data if r.get('anchor_quote_id'))
+    except Exception:
+        # Table might not exist yet
+        return set()
+
+
+def save_digest_history(theme: str, anchor_quote_id: str, anchor_article_id: str, cluster_quote_ids: list[str]) -> dict | None:
+    """Record a sent digest to avoid repetition."""
+    try:
+        result = supabase.table("digest_history").insert({
+            "theme": theme,
+            "anchor_quote_id": anchor_quote_id,
+            "anchor_article_id": anchor_article_id,
+            "cluster_quote_ids": cluster_quote_ids
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Failed to save digest history: {e}")
+        return None
