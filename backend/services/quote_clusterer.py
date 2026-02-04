@@ -41,10 +41,15 @@ def find_quote_clusters(
     similarity_threshold: float = 0.60,
     min_quotes: int = 5,
     min_articles: int = 3,
-    require_old_anchor: bool = True
+    require_old_anchor: bool = True,
+    excluded_anchor_ids: set[str] = None
 ) -> list[dict]:
     """
     Find clusters of semantically similar quotes.
+
+    IMPORTANT: Quotes can belong to multiple clusters! Each cluster is defined
+    by its anchor quote, but supporting quotes can appear in many clusters.
+    This allows articles touching multiple themes to contribute to all of them.
 
     Args:
         quotes: List of quote dicts with 'id', 'article_id', 'quote_text',
@@ -53,6 +58,7 @@ def find_quote_clusters(
         min_quotes: Minimum quotes needed for a valid cluster
         min_articles: Minimum unique articles needed for a valid cluster
         require_old_anchor: If True, requires a 2+ month old quote as anchor
+        excluded_anchor_ids: Quote IDs that cannot be used as anchors (recently used)
 
     Returns:
         List of cluster dicts, each containing:
@@ -70,30 +76,33 @@ def find_quote_clusters(
     if len(quotes_with_embeddings) < min_quotes:
         return []
 
-    # Track which quotes have been clustered
-    clustered = set()
+    excluded_anchor_ids = excluded_anchor_ids or set()
+
+    # Track which quotes have been used as ANCHORS (not as cluster members)
+    used_as_anchor = set()
     clusters = []
 
     # Sort by created_at so older quotes anchor clusters
     sorted_quotes = sorted(quotes_with_embeddings, key=lambda q: q['created_at'])
 
     for anchor in sorted_quotes:
-        if anchor['id'] in clustered:
+        # Skip if already used as anchor or excluded
+        if anchor['id'] in used_as_anchor or anchor['id'] in excluded_anchor_ids:
             continue
 
         # Start a new cluster with this anchor
         cluster_quotes = [anchor]
-        clustered.add(anchor['id'])
+        used_as_anchor.add(anchor['id'])
 
-        # Find similar quotes
+        # Find ALL similar quotes (they CAN be in other clusters too!)
         for candidate in sorted_quotes:
-            if candidate['id'] in clustered:
+            if candidate['id'] == anchor['id']:
                 continue
 
             sim = cosine_similarity(anchor['embedding'], candidate['embedding'])
             if sim >= similarity_threshold:
                 cluster_quotes.append(candidate)
-                clustered.add(candidate['id'])
+                # Note: we do NOT mark candidate as "used" - it can join other clusters
 
         # Check if cluster meets criteria
         article_ids = set(q['article_id'] for q in cluster_quotes)
@@ -165,26 +174,24 @@ def get_cluster_for_digest(quotes: list[dict], relaxed: bool = False, excluded_a
     """
     import random
 
-    clusters = find_quote_clusters(quotes, require_old_anchor=not relaxed)
-
-    if not clusters:
-        return None
-
     excluded_anchor_ids = excluded_anchor_ids or set()
 
-    # Filter out clusters whose anchors were recently used
-    available_clusters = [
-        c for c in clusters
-        if c['anchor_quote']['id'] not in excluded_anchor_ids
-    ]
+    # Pass excluded anchors to clustering so they're skipped during cluster formation
+    clusters = find_quote_clusters(
+        quotes,
+        require_old_anchor=not relaxed,
+        excluded_anchor_ids=excluded_anchor_ids
+    )
 
-    # If all clusters were recently used, reset and allow any
-    if not available_clusters:
-        available_clusters = clusters
+    if not clusters:
+        # If no clusters found (maybe all anchors excluded), try without exclusions
+        clusters = find_quote_clusters(quotes, require_old_anchor=not relaxed)
+        if not clusters:
+            return None
 
     # Pick randomly from the top clusters (weighted toward better ones)
     # Take top 3 clusters and pick one randomly
-    top_clusters = available_clusters[:min(3, len(available_clusters))]
+    top_clusters = clusters[:min(3, len(clusters))]
 
     # Weight toward the first (best) cluster but allow variety
     weights = [3, 2, 1][:len(top_clusters)]
