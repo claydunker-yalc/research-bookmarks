@@ -233,3 +233,23 @@ def save_digest_history(theme: str, anchor_quote_id: str, anchor_article_id: str
     except Exception as e:
         print(f"Failed to save digest history: {e}")
         return None
+
+
+def delete_quotes_for_article(article_id: str) -> int:
+    """Delete all quotes for an article (for re-extraction)."""
+    try:
+        result = supabase.table("quotes").delete().eq("article_id", article_id).execute()
+        return len(result.data) if result.data else 0
+    except Exception as e:
+        print(f"Failed to delete quotes: {e}")
+        return 0
+
+
+def get_all_articles_with_text() -> list[dict]:
+    """Get all articles with their full text for re-extraction."""
+    result = (
+        supabase.table("articles")
+        .select("id, url, title, clean_text, domain, created_at")
+        .execute()
+    )
+    return result.data

@@ -24,7 +24,9 @@ from database import (
     get_articles_without_quotes,
     article_has_quotes,
     get_recent_digest_anchor_ids,
-    save_digest_history
+    save_digest_history,
+    delete_quotes_for_article,
+    get_all_articles_with_text
 )
 from services import (
     extract_article,
@@ -45,7 +47,8 @@ scheduler = BackgroundScheduler(timezone=pytz.timezone('America/Chicago'))
 def extract_and_store_quotes(article_id: str, article_text: str, article_title: str):
     """Background task to extract quotes from an article and store them."""
     try:
-        quotes = extract_quotes(article_text, article_title)
+        # Use thorough=True for multi-theme extraction (5-10 quotes per article)
+        quotes = extract_quotes(article_text, article_title, thorough=True)
         if quotes:
             # Generate embeddings for each quote
             quotes_with_embeddings = []
@@ -527,6 +530,85 @@ async def backfill_quotes(background_tasks: BackgroundTasks, limit: int = 10):
         "message": f"Started quote extraction for {len(to_process)} articles",
         "processing": [{"id": a["id"], "title": a.get("title")} for a in to_process],
         "remaining": len(articles) - len(to_process)
+    }
+
+
+def reextract_quotes_for_article(article_id: str, article_text: str, article_title: str):
+    """Background task to delete old quotes and extract new ones with thorough mode."""
+    try:
+        # Delete existing quotes
+        deleted = delete_quotes_for_article(article_id)
+        print(f"Deleted {deleted} old quotes from article {article_id}")
+
+        # Extract new quotes with thorough=True for multi-theme coverage
+        quotes = extract_quotes(article_text, article_title, thorough=True)
+        if quotes:
+            # Generate embeddings for each quote
+            quotes_with_embeddings = []
+            for q in quotes:
+                embedding = generate_embedding(q['quote_text'])
+                quotes_with_embeddings.append({
+                    'article_id': article_id,
+                    'quote_text': q['quote_text'],
+                    'embedding': embedding
+                })
+            insert_quotes_batch(quotes_with_embeddings)
+            print(f"Extracted {len(quotes_with_embeddings)} new quotes from article {article_id}")
+    except Exception as e:
+        print(f"Re-extraction failed for {article_id}: {e}")
+
+
+@app.post("/quotes/reextract")
+async def reextract_all_quotes(background_tasks: BackgroundTasks, limit: int = 10):
+    """
+    Re-extract quotes from ALL articles with thorough multi-theme extraction.
+
+    This replaces existing quotes with new ones that cover more themes.
+    Use this to upgrade your quote library for better thematic diversity.
+    Runs in background to avoid timeout.
+    """
+    articles = get_all_articles_with_text()
+
+    if not articles:
+        return {"message": "No articles found", "processed": 0}
+
+    # Process up to 'limit' articles
+    to_process = articles[:limit]
+
+    for article in to_process:
+        background_tasks.add_task(
+            reextract_quotes_for_article,
+            article["id"],
+            article.get("clean_text", ""),
+            article.get("title", "")
+        )
+
+    return {
+        "message": f"Started thorough re-extraction for {len(to_process)} articles",
+        "processing": [{"id": a["id"], "title": a.get("title")} for a in to_process],
+        "remaining": len(articles) - len(to_process),
+        "note": "Each article will now have 5-10 quotes covering different themes"
+    }
+
+
+@app.post("/quotes/reextract/{article_id}")
+async def reextract_single_article(article_id: str, background_tasks: BackgroundTasks):
+    """Re-extract quotes for a single article with thorough multi-theme extraction."""
+    article = get_article_by_id(article_id)
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    background_tasks.add_task(
+        reextract_quotes_for_article,
+        article["id"],
+        article.get("clean_text", ""),
+        article.get("title", "")
+    )
+
+    return {
+        "message": f"Started thorough re-extraction for '{article.get('title')}'",
+        "article_id": article_id
     }
 
 
