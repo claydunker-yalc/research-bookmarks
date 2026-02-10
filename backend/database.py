@@ -253,3 +253,153 @@ def get_all_articles_with_text() -> list[dict]:
         .execute()
     )
     return result.data
+
+
+# Category functions
+
+def get_all_categories() -> list[dict]:
+    """Get all categories ordered by name."""
+    result = (
+        supabase.table("categories")
+        .select("*")
+        .order("name")
+        .execute()
+    )
+    return result.data
+
+
+def get_active_categories(frequency: str | None = None) -> list[dict]:
+    """Get active categories, optionally filtered by frequency."""
+    query = (
+        supabase.table("categories")
+        .select("*")
+        .eq("is_active", True)
+    )
+    if frequency:
+        query = query.eq("digest_frequency", frequency)
+    result = query.order("name").execute()
+    return result.data
+
+
+def get_category_by_id(category_id: str) -> dict | None:
+    """Get a single category by ID."""
+    result = supabase.table("categories").select("*").eq("id", category_id).execute()
+    if result.data:
+        return result.data[0]
+    return None
+
+
+def insert_category(category_data: dict) -> dict:
+    """Insert a new category into the database."""
+    result = supabase.table("categories").insert(category_data).execute()
+    return result.data[0] if result.data else None
+
+
+def update_category(category_id: str, updates: dict) -> dict | None:
+    """Update an existing category."""
+    from datetime import datetime
+    updates["updated_at"] = datetime.utcnow().isoformat()
+    result = (
+        supabase.table("categories")
+        .update(updates)
+        .eq("id", category_id)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def delete_category(category_id: str) -> bool:
+    """Soft delete a category by setting is_active=False."""
+    result = update_category(category_id, {"is_active": False})
+    return result is not None
+
+
+def search_quotes_by_embedding(query_embedding: list[float], limit: int = 50, threshold: float = 0.5) -> list[dict]:
+    """Search quotes by embedding similarity using RPC function."""
+    try:
+        result = supabase.rpc(
+            "search_quotes",
+            {
+                "query_embedding": query_embedding,
+                "match_count": limit,
+                "similarity_threshold": threshold
+            }
+        ).execute()
+        return result.data
+    except Exception as e:
+        print(f"Failed to search quotes by embedding: {e}")
+        return []
+
+
+def get_themes_from_digest_history() -> list[dict]:
+    """Get unique themes from past digests with their occurrence count."""
+    try:
+        result = supabase.table("digest_history").select("theme").execute()
+
+        # Count occurrences of each theme
+        theme_counts = {}
+        for row in result.data:
+            theme = row.get("theme")
+            if theme:
+                theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+        # Convert to list sorted by count
+        themes = [{"name": name, "count": count} for name, count in theme_counts.items()]
+        themes.sort(key=lambda x: x["count"], reverse=True)
+        return themes
+    except Exception:
+        return []
+
+
+def get_recent_category_quote_ids(category_id: str, days: int = 30) -> set[str]:
+    """Get quote IDs used in recent category digests to avoid repetition."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    try:
+        result = (
+            supabase.table("category_digest_history")
+            .select("quote_ids")
+            .eq("category_id", category_id)
+            .gte("sent_at", cutoff)
+            .execute()
+        )
+
+        all_ids = set()
+        for row in result.data:
+            if row.get("quote_ids"):
+                all_ids.update(row["quote_ids"])
+        return all_ids
+    except Exception:
+        return set()
+
+
+def save_category_digest_history(
+    category_id: str,
+    quote_ids: list[str],
+    article_count: int,
+    subject: str
+) -> dict | None:
+    """Record a sent category digest."""
+    try:
+        result = supabase.table("category_digest_history").insert({
+            "category_id": category_id,
+            "quote_ids": quote_ids,
+            "article_count": article_count,
+            "subject": subject
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Failed to save category digest history: {e}")
+        return None
+
+
+def update_category_last_digest(category_id: str) -> None:
+    """Update the last_digest_at timestamp for a category."""
+    from datetime import datetime
+    try:
+        supabase.table("categories").update({
+            "last_digest_at": datetime.utcnow().isoformat()
+        }).eq("id", category_id).execute()
+    except Exception as e:
+        print(f"Failed to update category last_digest_at: {e}")

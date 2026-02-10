@@ -114,12 +114,24 @@ JSON array:"""
 
         # Parse JSON response
         import json
+        import re
 
         # Handle potential markdown code blocks
         if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
             if response_text.startswith("json"):
                 response_text = response_text[4:]
+
+        # Try to extract JSON array even if there's extra text
+        # Look for the array pattern
+        json_match = re.search(r'\[[\s\S]*\]', response_text)
+        if json_match:
+            response_text = json_match.group()
+
+        # Clean up common JSON issues from LLM responses
+        # Remove trailing commas before ] or }
+        response_text = re.sub(r',\s*]', ']', response_text)
+        response_text = re.sub(r',\s*}', '}', response_text)
 
         quotes = json.loads(response_text)
 

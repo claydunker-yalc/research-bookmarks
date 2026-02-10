@@ -6,7 +6,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 
-from models import ArticleCreate, ArticleManualCreate, ArticleResponse, ArticleExport, SearchRequest, SearchResult, SynthesizeRequest, SynthesisResponse
+from models import (
+    ArticleCreate, ArticleManualCreate, ArticleResponse, ArticleExport,
+    SearchRequest, SearchResult, SynthesizeRequest, SynthesisResponse,
+    CategoryCreate, CategoryUpdate, CategoryResponse, CategoryWithStats,
+    CategoryDigestPreview, DiscoveredTheme
+)
 from urllib.parse import urlparse
 from database import (
     check_url_exists,
@@ -26,7 +31,18 @@ from database import (
     get_recent_digest_anchor_ids,
     save_digest_history,
     delete_quotes_for_article,
-    get_all_articles_with_text
+    get_all_articles_with_text,
+    # Category functions
+    get_all_categories,
+    get_active_categories,
+    get_category_by_id,
+    insert_category,
+    update_category,
+    delete_category,
+    get_themes_from_digest_history,
+    get_recent_category_quote_ids,
+    save_category_digest_history,
+    update_category_last_digest
 )
 from services import (
     extract_article,
@@ -38,6 +54,8 @@ from services import (
     is_email_configured,
     extract_quotes
 )
+from services.category_matcher import generate_category_embedding, get_category_stats
+from services.category_digest_generator import generate_category_digest
 from services.article_extractor import ExtractionError
 
 # Scheduler for periodic digest emails
@@ -101,21 +119,77 @@ def send_scheduled_digest():
         print(f"Failed to send digest: {e}")
 
 
+def send_scheduled_category_digests():
+    """Background task to send digest emails for active weekly categories."""
+    if not is_email_configured():
+        print("Email not configured, skipping category digests")
+        return
+
+    try:
+        categories = get_active_categories(frequency='weekly')
+
+        if not categories:
+            print("No active weekly categories, skipping")
+            return
+
+        for category in categories:
+            try:
+                # Get recently used quote IDs for this category
+                excluded_quotes = get_recent_category_quote_ids(category['id'], days=30)
+
+                digest = generate_category_digest(category, excluded_quote_ids=excluded_quotes)
+
+                if digest:
+                    send_digest_email(digest["subject"], digest["html_body"])
+
+                    # Save history
+                    save_category_digest_history(
+                        category_id=category['id'],
+                        quote_ids=digest['quote_ids'],
+                        article_count=digest['article_count'],
+                        subject=digest['subject']
+                    )
+
+                    # Update last_digest_at
+                    update_category_last_digest(category['id'])
+
+                    print(f"Category digest sent: '{category['name']}'")
+                else:
+                    print(f"Not enough content for category '{category['name']}', skipping")
+
+            except Exception as e:
+                print(f"Failed to send digest for category '{category['name']}': {e}")
+
+    except Exception as e:
+        print(f"Failed to send category digests: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: start scheduler if email is configured
     if is_email_configured():
-        # Schedule for 9:45 AM Central time every day
+        # Schedule daily curator digest at 9:45 AM Central
         scheduler.add_job(
             send_scheduled_digest,
             CronTrigger(hour=9, minute=45, timezone=pytz.timezone('America/Chicago')),
             id="curator_digest",
             replace_existing=True
         )
+
+        # Schedule weekly category digests on Sundays at 10:00 AM Central
+        scheduler.add_job(
+            send_scheduled_category_digests,
+            CronTrigger(day_of_week='sun', hour=10, minute=0, timezone=pytz.timezone('America/Chicago')),
+            id="category_digests",
+            replace_existing=True
+        )
+
         scheduler.start()
-        print("Curator digest scheduler started (daily at 9:45 AM Central)")
+        print("Digest schedulers started:")
+        print("  - Curator digest: daily at 9:45 AM Central")
+        print("  - Category digests: Sundays at 10:00 AM Central")
     else:
-        print("Email not configured, digest scheduler not started")
+        print("Email not configured, digest schedulers not started")
     yield
     # Shutdown: stop scheduler
     if scheduler.running:
@@ -610,6 +684,377 @@ async def reextract_single_article(article_id: str, background_tasks: Background
         "message": f"Started thorough re-extraction for '{article.get('title')}'",
         "article_id": article_id
     }
+
+
+@app.post("/quotes/reextract-sync")
+async def reextract_all_quotes_sync(limit: int = 50, offset: int = 0):
+    """
+    Re-extract quotes from articles SYNCHRONOUSLY (one at a time).
+
+    This is slower but avoids resource contention issues.
+    Use this instead of /quotes/reextract for reliable batch processing.
+
+    Args:
+        limit: Number of articles to process (default 50)
+        offset: Skip first N articles (use for resuming)
+    """
+    import time
+
+    articles = get_all_articles_with_text()
+
+    if not articles:
+        return {"message": "No articles found", "processed": 0}
+
+    # Apply offset and limit
+    to_process = articles[offset:offset + limit]
+
+    results = []
+    for i, article in enumerate(to_process):
+        article_id = article["id"]
+        title = article.get("title", "Untitled")
+
+        try:
+            # Delete existing quotes
+            deleted = delete_quotes_for_article(article_id)
+
+            # Small delay to avoid rate limits
+            time.sleep(0.5)
+
+            # Extract new quotes
+            quotes = extract_quotes(
+                article.get("clean_text", ""),
+                title,
+                thorough=True
+            )
+
+            if quotes:
+                # Generate embeddings
+                quotes_with_embeddings = []
+                for q in quotes:
+                    embedding = generate_embedding(q['quote_text'])
+                    quotes_with_embeddings.append({
+                        'article_id': article_id,
+                        'quote_text': q['quote_text'],
+                        'embedding': embedding
+                    })
+                    time.sleep(0.2)  # Small delay between embeddings
+
+                insert_quotes_batch(quotes_with_embeddings)
+                results.append({
+                    "id": article_id,
+                    "title": title,
+                    "status": "success",
+                    "quotes_deleted": deleted,
+                    "quotes_extracted": len(quotes_with_embeddings)
+                })
+            else:
+                results.append({
+                    "id": article_id,
+                    "title": title,
+                    "status": "no_quotes",
+                    "quotes_deleted": deleted,
+                    "quotes_extracted": 0
+                })
+
+        except Exception as e:
+            results.append({
+                "id": article_id,
+                "title": title,
+                "status": "error",
+                "error": str(e)
+            })
+
+        # Small delay between articles
+        time.sleep(0.5)
+
+    successful = sum(1 for r in results if r["status"] == "success")
+    failed = sum(1 for r in results if r["status"] == "error")
+    total_quotes = sum(r.get("quotes_extracted", 0) for r in results)
+
+    return {
+        "message": f"Processed {len(to_process)} articles",
+        "successful": successful,
+        "failed": failed,
+        "total_new_quotes": total_quotes,
+        "total_articles": len(articles),
+        "next_offset": offset + limit if offset + limit < len(articles) else None,
+        "results": results
+    }
+
+
+# ============ CATEGORY ENDPOINTS ============
+
+@app.get("/categories", response_model=list[CategoryWithStats])
+async def list_categories():
+    """Get all categories with matching quote statistics."""
+    categories = get_all_categories()
+
+    result = []
+    for cat in categories:
+        # Get stats if category has an embedding
+        if cat.get('embedding'):
+            stats = get_category_stats(cat['embedding'])
+        else:
+            stats = {'matching_quotes_count': 0, 'matching_articles_count': 0}
+
+        result.append(CategoryWithStats(
+            id=cat['id'],
+            name=cat['name'],
+            description=cat.get('description'),
+            source=cat.get('source', 'requested'),
+            is_active=cat.get('is_active', True),
+            digest_frequency=cat.get('digest_frequency', 'weekly'),
+            min_quotes_for_digest=cat.get('min_quotes_for_digest', 5),
+            last_digest_at=cat.get('last_digest_at'),
+            created_at=cat['created_at'],
+            matching_quotes_count=stats['matching_quotes_count'],
+            matching_articles_count=stats['matching_articles_count']
+        ))
+
+    return result
+
+
+@app.get("/categories/discovered", response_model=list[DiscoveredTheme])
+async def get_discovered_themes():
+    """
+    Get recurring themes from past digest history.
+    These are themes that could be converted into categories.
+    """
+    themes = get_themes_from_digest_history()
+
+    # Filter to themes that appeared at least twice
+    return [
+        DiscoveredTheme(name=t['name'], count=t['count'])
+        for t in themes if t['count'] >= 2
+    ]
+
+
+@app.post("/categories", response_model=CategoryResponse)
+async def create_category(category: CategoryCreate):
+    """
+    Create a new category.
+    Generates an embedding from the name and description for semantic matching.
+    """
+    # Generate embedding for semantic matching
+    embedding = generate_category_embedding(category.name, category.description)
+
+    category_data = {
+        "name": category.name,
+        "description": category.description,
+        "embedding": embedding,
+        "source": "requested",
+        "is_active": True,
+        "digest_frequency": category.digest_frequency,
+        "min_quotes_for_digest": category.min_quotes_for_digest
+    }
+
+    saved = insert_category(category_data)
+
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to create category")
+
+    return CategoryResponse(
+        id=saved['id'],
+        name=saved['name'],
+        description=saved.get('description'),
+        source=saved.get('source', 'requested'),
+        is_active=saved.get('is_active', True),
+        digest_frequency=saved.get('digest_frequency', 'weekly'),
+        min_quotes_for_digest=saved.get('min_quotes_for_digest', 5),
+        last_digest_at=saved.get('last_digest_at'),
+        created_at=saved['created_at']
+    )
+
+
+@app.get("/categories/{category_id}", response_model=CategoryWithStats)
+async def get_category(category_id: str):
+    """Get a single category with statistics."""
+    cat = get_category_by_id(category_id)
+
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # Get stats if category has an embedding
+    if cat.get('embedding'):
+        stats = get_category_stats(cat['embedding'])
+    else:
+        stats = {'matching_quotes_count': 0, 'matching_articles_count': 0}
+
+    return CategoryWithStats(
+        id=cat['id'],
+        name=cat['name'],
+        description=cat.get('description'),
+        source=cat.get('source', 'requested'),
+        is_active=cat.get('is_active', True),
+        digest_frequency=cat.get('digest_frequency', 'weekly'),
+        min_quotes_for_digest=cat.get('min_quotes_for_digest', 5),
+        last_digest_at=cat.get('last_digest_at'),
+        created_at=cat['created_at'],
+        matching_quotes_count=stats['matching_quotes_count'],
+        matching_articles_count=stats['matching_articles_count']
+    )
+
+
+@app.patch("/categories/{category_id}", response_model=CategoryResponse)
+async def update_category_endpoint(category_id: str, updates: CategoryUpdate):
+    """
+    Update a category.
+    If name or description is changed, regenerates the embedding.
+    """
+    cat = get_category_by_id(category_id)
+
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    update_data = {}
+
+    # Collect non-None updates
+    if updates.name is not None:
+        update_data['name'] = updates.name
+    if updates.description is not None:
+        update_data['description'] = updates.description
+    if updates.is_active is not None:
+        update_data['is_active'] = updates.is_active
+    if updates.digest_frequency is not None:
+        update_data['digest_frequency'] = updates.digest_frequency
+    if updates.min_quotes_for_digest is not None:
+        update_data['min_quotes_for_digest'] = updates.min_quotes_for_digest
+
+    # Regenerate embedding if name or description changed
+    if 'name' in update_data or 'description' in update_data:
+        new_name = update_data.get('name', cat['name'])
+        new_desc = update_data.get('description', cat.get('description'))
+        update_data['embedding'] = generate_category_embedding(new_name, new_desc)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No updates provided")
+
+    updated = update_category(category_id, update_data)
+
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update category")
+
+    return CategoryResponse(
+        id=updated['id'],
+        name=updated['name'],
+        description=updated.get('description'),
+        source=updated.get('source', 'requested'),
+        is_active=updated.get('is_active', True),
+        digest_frequency=updated.get('digest_frequency', 'weekly'),
+        min_quotes_for_digest=updated.get('min_quotes_for_digest', 5),
+        last_digest_at=updated.get('last_digest_at'),
+        created_at=updated['created_at']
+    )
+
+
+@app.delete("/categories/{category_id}")
+async def delete_category_endpoint(category_id: str):
+    """Deactivate a category (soft delete)."""
+    cat = get_category_by_id(category_id)
+
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    success = delete_category(category_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete category")
+
+    return {"message": "Category deactivated", "id": category_id}
+
+
+@app.get("/categories/{category_id}/preview", response_model=CategoryDigestPreview)
+async def preview_category_digest(category_id: str):
+    """Preview what a category digest would contain without sending."""
+    cat = get_category_by_id(category_id)
+
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if not cat.get('embedding'):
+        return CategoryDigestPreview(
+            category_id=category_id,
+            category_name=cat['name'],
+            matching_quotes=0,
+            matching_articles=0,
+            can_send=False,
+            sample_quotes=[]
+        )
+
+    # Get excluded quotes
+    excluded = get_recent_category_quote_ids(category_id, days=30)
+
+    # Get stats
+    stats = get_category_stats(cat['embedding'], excluded_quote_ids=excluded)
+
+    min_quotes = cat.get('min_quotes_for_digest', 5)
+    can_send = (
+        stats['matching_quotes_count'] >= min_quotes and
+        stats['matching_articles_count'] >= 3
+    )
+
+    return CategoryDigestPreview(
+        category_id=category_id,
+        category_name=cat['name'],
+        matching_quotes=stats['matching_quotes_count'],
+        matching_articles=stats['matching_articles_count'],
+        can_send=can_send,
+        sample_quotes=stats['sample_quotes']
+    )
+
+
+@app.post("/categories/{category_id}/send")
+async def send_category_digest_endpoint(category_id: str):
+    """Manually trigger sending a category digest email."""
+    if not is_email_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Email not configured. Set RESEND_API_KEY and USER_EMAIL environment variables."
+        )
+
+    cat = get_category_by_id(category_id)
+
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if not cat.get('embedding'):
+        raise HTTPException(status_code=400, detail="Category has no embedding")
+
+    # Get excluded quotes
+    excluded = get_recent_category_quote_ids(category_id, days=30)
+
+    digest = generate_category_digest(cat, excluded_quote_ids=excluded)
+
+    if not digest:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough matching content. Need {cat.get('min_quotes_for_digest', 5)}+ quotes from 3+ articles."
+        )
+
+    try:
+        result = send_digest_email(digest["subject"], digest["html_body"])
+
+        # Save history
+        save_category_digest_history(
+            category_id=category_id,
+            quote_ids=digest['quote_ids'],
+            article_count=digest['article_count'],
+            subject=digest['subject']
+        )
+
+        # Update last_digest_at
+        update_category_last_digest(category_id)
+
+        return {
+            "success": True,
+            "message": f"Category digest sent for '{cat['name']}'",
+            "quotes_included": len(digest['quote_ids']),
+            "articles_included": digest['article_count'],
+            "email_id": result.get("id")
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 
 if __name__ == "__main__":

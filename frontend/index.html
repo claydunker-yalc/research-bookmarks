@@ -14,6 +14,7 @@
             <p class="subtitle">Save and search articles by meaning</p>
             <nav class="tab-nav">
                 <button class="tab-btn active" data-tab="main">Articles</button>
+                <button class="tab-btn" data-tab="categories">Categories</button>
                 <button class="tab-btn" data-tab="features">Features</button>
             </nav>
         </header>
@@ -82,6 +83,79 @@
         </section>
 
         </div><!-- End Main Tab -->
+
+        <!-- Categories Tab Content -->
+        <div id="categories-tab" class="tab-content">
+            <section class="categories-section">
+                <div class="categories-header">
+                    <h2>Category Management</h2>
+                    <button id="add-category-btn" class="primary-btn">+ New Category</button>
+                </div>
+
+                <!-- Discovered themes suggestion -->
+                <div id="discovered-themes" class="discovered-themes hidden">
+                    <h3>Suggested from your reading patterns</h3>
+                    <div id="themes-list"></div>
+                </div>
+
+                <!-- Category list -->
+                <div id="categories-list" class="categories-grid"></div>
+
+                <!-- Empty state -->
+                <div id="categories-empty" class="empty-state hidden">
+                    <p>No categories yet. Create one to get themed digest emails!</p>
+                </div>
+
+                <!-- Loading state -->
+                <div id="categories-loading" class="loading hidden">Loading categories...</div>
+            </section>
+        </div><!-- End Categories Tab -->
+
+        <!-- Category Modal -->
+        <div id="category-modal" class="modal hidden">
+            <div class="modal-content category-modal-content">
+                <div class="modal-header">
+                    <h2 id="category-modal-title">New Category</h2>
+                    <button class="close-btn" id="close-category-modal">&times;</button>
+                </div>
+                <form id="category-form">
+                    <div class="form-group">
+                        <label for="category-name">Name</label>
+                        <input type="text" id="category-name" placeholder="e.g., AI Ethics" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="category-description">Description (optional)</label>
+                        <textarea id="category-description" rows="3"
+                            placeholder="Describe what topics this category should include..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="digest-frequency">Digest Frequency</label>
+                        <select id="digest-frequency">
+                            <option value="weekly">Weekly (Sundays)</option>
+                            <option value="manual">Manual only</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="secondary" id="cancel-category">Cancel</button>
+                        <button type="submit" class="primary-btn">Save Category</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Category Preview Modal -->
+        <div id="preview-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Digest Preview</h2>
+                    <button class="close-btn" id="close-preview-modal">&times;</button>
+                </div>
+                <div id="preview-content"></div>
+                <div class="modal-footer">
+                    <button id="send-digest-btn" class="primary-btn" disabled>Send Now</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Features Tab Content -->
         <div id="features-tab" class="tab-content">

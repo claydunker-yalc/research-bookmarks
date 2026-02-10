@@ -598,7 +598,347 @@ tabBtns.forEach(btn => {
                 content.classList.add('active');
             }
         });
+
+        // Load categories when tab is shown
+        if (targetTab === 'categories') {
+            loadCategories();
+        }
     });
+});
+
+// ============ CATEGORY MANAGEMENT ============
+
+// Category DOM elements
+const categoriesList = document.getElementById('categories-list');
+const categoriesEmpty = document.getElementById('categories-empty');
+const categoriesLoading = document.getElementById('categories-loading');
+const discoveredThemes = document.getElementById('discovered-themes');
+const themesList = document.getElementById('themes-list');
+const addCategoryBtn = document.getElementById('add-category-btn');
+const categoryModal = document.getElementById('category-modal');
+const categoryForm = document.getElementById('category-form');
+const categoryModalTitle = document.getElementById('category-modal-title');
+const categoryNameInput = document.getElementById('category-name');
+const categoryDescInput = document.getElementById('category-description');
+const digestFrequencySelect = document.getElementById('digest-frequency');
+const cancelCategoryBtn = document.getElementById('cancel-category');
+const closeCategoryModalBtn = document.getElementById('close-category-modal');
+const previewModal = document.getElementById('preview-modal');
+const previewContent = document.getElementById('preview-content');
+const closePreviewModalBtn = document.getElementById('close-preview-modal');
+const sendDigestBtn = document.getElementById('send-digest-btn');
+
+let editingCategoryId = null;
+
+// Load categories from API
+async function loadCategories() {
+    categoriesLoading.classList.remove('hidden');
+    categoriesList.innerHTML = '';
+    categoriesEmpty.classList.add('hidden');
+
+    try {
+        const response = await fetch(`${API_URL}/categories`);
+        if (!response.ok) throw new Error('Failed to load categories');
+
+        const categories = await response.json();
+        renderCategories(categories);
+
+        // Also load discovered themes
+        loadDiscoveredThemes();
+    } catch (err) {
+        console.error('Failed to load categories:', err);
+        categoriesLoading.classList.add('hidden');
+        categoriesEmpty.textContent = 'Failed to load categories. Please try again.';
+        categoriesEmpty.classList.remove('hidden');
+    }
+}
+
+// Load themes discovered from digest history
+async function loadDiscoveredThemes() {
+    try {
+        const response = await fetch(`${API_URL}/categories/discovered`);
+        if (!response.ok) return;
+
+        const themes = await response.json();
+
+        if (themes.length > 0) {
+            renderDiscoveredThemes(themes);
+            discoveredThemes.classList.remove('hidden');
+        } else {
+            discoveredThemes.classList.add('hidden');
+        }
+    } catch (err) {
+        console.error('Failed to load discovered themes:', err);
+    }
+}
+
+// Render category cards
+function renderCategories(categories) {
+    categoriesLoading.classList.add('hidden');
+
+    if (categories.length === 0) {
+        categoriesList.innerHTML = '';
+        categoriesEmpty.classList.remove('hidden');
+        return;
+    }
+
+    categoriesEmpty.classList.add('hidden');
+    categoriesList.innerHTML = categories.map(cat => `
+        <div class="category-card ${!cat.is_active ? 'inactive' : ''}" data-id="${cat.id}">
+            <div class="category-header">
+                <h3>${escapeHtml(cat.name)}</h3>
+                <span class="category-source" data-source="${cat.source}">${cat.source}</span>
+            </div>
+            ${cat.description ? `<p class="category-desc">${escapeHtml(cat.description)}</p>` : ''}
+            <div class="category-stats">
+                <span>${cat.matching_quotes_count} quotes</span>
+                <span>${cat.matching_articles_count} articles</span>
+            </div>
+            <div class="category-meta">
+                <span class="frequency">${cat.digest_frequency}</span>
+                ${cat.last_digest_at ?
+                    `<span class="last-sent">Last: ${formatDate(cat.last_digest_at)}</span>` :
+                    '<span class="last-sent">Never sent</span>'}
+            </div>
+            <div class="category-actions">
+                <button class="preview-btn" data-id="${cat.id}">Preview</button>
+                <button class="edit-btn" data-id="${cat.id}">Edit</button>
+                <button class="send-btn" data-id="${cat.id}"
+                    ${cat.matching_quotes_count < cat.min_quotes_for_digest ? 'disabled' : ''}>
+                    Send Now
+                </button>
+            </div>
+        </div>
+    `).join('');
+
+    // Add event listeners
+    categoriesList.querySelectorAll('.preview-btn').forEach(btn => {
+        btn.addEventListener('click', () => previewCategoryDigest(btn.dataset.id));
+    });
+    categoriesList.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => editCategory(btn.dataset.id));
+    });
+    categoriesList.querySelectorAll('.send-btn').forEach(btn => {
+        btn.addEventListener('click', () => sendCategoryDigest(btn.dataset.id));
+    });
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Render discovered themes as suggestion chips
+function renderDiscoveredThemes(themes) {
+    themesList.innerHTML = themes.map(theme => `
+        <button class="theme-chip" data-theme="${escapeHtml(theme.name)}">
+            ${escapeHtml(theme.name)}
+            <span class="count">(${theme.count}x)</span>
+        </button>
+    `).join('');
+
+    themesList.querySelectorAll('.theme-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            // Pre-fill the category form with this theme
+            openCategoryModal();
+            categoryNameInput.value = chip.dataset.theme;
+        });
+    });
+}
+
+// Open category modal for create/edit
+function openCategoryModal(category = null) {
+    editingCategoryId = category?.id || null;
+    categoryModalTitle.textContent = category ? 'Edit Category' : 'New Category';
+
+    if (category) {
+        categoryNameInput.value = category.name;
+        categoryDescInput.value = category.description || '';
+        digestFrequencySelect.value = category.digest_frequency;
+    } else {
+        categoryForm.reset();
+    }
+
+    categoryModal.classList.remove('hidden');
+    categoryNameInput.focus();
+}
+
+// Close category modal
+function closeCategoryModal() {
+    categoryModal.classList.add('hidden');
+    editingCategoryId = null;
+    categoryForm.reset();
+}
+
+// Edit existing category
+async function editCategory(categoryId) {
+    try {
+        const response = await fetch(`${API_URL}/categories/${categoryId}`);
+        if (!response.ok) throw new Error('Failed to load category');
+
+        const category = await response.json();
+        openCategoryModal(category);
+    } catch (err) {
+        showToast('Failed to load category', 'error');
+    }
+}
+
+// Save category (create or update)
+async function saveCategory(e) {
+    e.preventDefault();
+
+    const data = {
+        name: categoryNameInput.value.trim(),
+        description: categoryDescInput.value.trim() || null,
+        digest_frequency: digestFrequencySelect.value
+    };
+
+    if (!data.name) {
+        categoryNameInput.focus();
+        return;
+    }
+
+    const submitBtn = categoryForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving...';
+
+    try {
+        const url = editingCategoryId
+            ? `${API_URL}/categories/${editingCategoryId}`
+            : `${API_URL}/categories`;
+        const method = editingCategoryId ? 'PATCH' : 'POST';
+
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || 'Failed to save category');
+        }
+
+        closeCategoryModal();
+        loadCategories();
+        showToast(`Category ${editingCategoryId ? 'updated' : 'created'}!`);
+    } catch (err) {
+        showToast(err.message || 'Failed to save category', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save Category';
+    }
+}
+
+// Preview category digest
+async function previewCategoryDigest(categoryId) {
+    previewContent.innerHTML = '<div class="loading">Loading preview...</div>';
+    previewModal.classList.remove('hidden');
+    sendDigestBtn.disabled = true;
+    sendDigestBtn.dataset.categoryId = categoryId;
+
+    try {
+        const response = await fetch(`${API_URL}/categories/${categoryId}/preview`);
+        if (!response.ok) throw new Error('Failed to load preview');
+
+        const preview = await response.json();
+
+        if (!preview.can_send) {
+            previewContent.innerHTML = `
+                <div class="preview-warning">
+                    <p>Not enough matching content for a digest.</p>
+                    <p>Found <strong>${preview.matching_quotes}</strong> quotes from <strong>${preview.matching_articles}</strong> articles.</p>
+                    <p>Minimum required: 5 quotes from 3 articles.</p>
+                </div>
+            `;
+            sendDigestBtn.disabled = true;
+        } else {
+            previewContent.innerHTML = `
+                <div class="preview-stats">
+                    <p><strong>${preview.matching_quotes}</strong> matching quotes from
+                       <strong>${preview.matching_articles}</strong> articles</p>
+                </div>
+                <h4>Sample Quotes:</h4>
+                <div class="preview-quotes">
+                    ${preview.sample_quotes.map(q => `
+                        <blockquote>
+                            "${escapeHtml(q.quote_text)}"
+                            <cite>- ${escapeHtml(q.article_title || 'Untitled')}</cite>
+                        </blockquote>
+                    `).join('')}
+                </div>
+            `;
+            sendDigestBtn.disabled = false;
+        }
+    } catch (err) {
+        previewContent.innerHTML = '<div class="error">Failed to load preview</div>';
+    }
+}
+
+// Send category digest
+async function sendCategoryDigest(categoryId) {
+    const btn = document.querySelector(`.send-btn[data-id="${categoryId}"]`) || sendDigestBtn;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+
+    try {
+        const response = await fetch(`${API_URL}/categories/${categoryId}/send`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || 'Failed to send');
+        }
+
+        showToast('Digest sent successfully!');
+        previewModal.classList.add('hidden');
+        loadCategories(); // Refresh to show updated last_digest_at
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+// Close preview modal
+function closePreviewModal() {
+    previewModal.classList.add('hidden');
+}
+
+// Category event listeners
+addCategoryBtn.addEventListener('click', () => openCategoryModal());
+categoryForm.addEventListener('submit', saveCategory);
+cancelCategoryBtn.addEventListener('click', closeCategoryModal);
+closeCategoryModalBtn.addEventListener('click', closeCategoryModal);
+closePreviewModalBtn.addEventListener('click', closePreviewModal);
+sendDigestBtn.addEventListener('click', () => {
+    const categoryId = sendDigestBtn.dataset.categoryId;
+    if (categoryId) sendCategoryDigest(categoryId);
+});
+
+// Close category modals on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (!categoryModal.classList.contains('hidden')) {
+            closeCategoryModal();
+        }
+        if (!previewModal.classList.contains('hidden')) {
+            closePreviewModal();
+        }
+    }
+});
+
+// Close modals when clicking backdrop
+categoryModal.addEventListener('click', (e) => {
+    if (e.target === categoryModal) closeCategoryModal();
+});
+previewModal.addEventListener('click', (e) => {
+    if (e.target === previewModal) closePreviewModal();
 });
 
 loadAllArticles();
