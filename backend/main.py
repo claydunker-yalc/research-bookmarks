@@ -817,15 +817,15 @@ async def list_categories():
 @app.get("/categories/discovered", response_model=list[DiscoveredTheme])
 async def get_discovered_themes():
     """
-    Get recurring themes from past digest history.
+    Get all themes from past digest history.
     These are themes that could be converted into categories.
     """
     themes = get_themes_from_digest_history()
 
-    # Filter to themes that appeared at least twice
+    # Return all themes (sorted by count, most frequent first)
     return [
         DiscoveredTheme(name=t['name'], count=t['count'])
-        for t in themes if t['count'] >= 2
+        for t in themes
     ]
 
 
