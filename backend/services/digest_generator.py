@@ -335,7 +335,7 @@ def generate_digest_for_category(category: dict, quotes_with_articles: list[dict
     # Find quotes matching this category
     matching_quotes = find_quotes_for_category(
         category_embedding=embedding,
-        similarity_threshold=0.50,  # Slightly lower threshold for requested categories
+        similarity_threshold=0.35,  # Lower threshold to find more matching quotes
         limit=20
     )
 

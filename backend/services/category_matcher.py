@@ -31,7 +31,7 @@ def generate_category_embedding(name: str, description: str | None = None) -> li
 
 def find_quotes_for_category(
     category_embedding: list[float],
-    similarity_threshold: float = 0.55,
+    similarity_threshold: float = 0.35,
     limit: int = 50,
     excluded_quote_ids: set[str] | None = None
 ) -> list[dict]:
@@ -44,7 +44,7 @@ def find_quotes_for_category(
 
     Args:
         category_embedding: The category's embedding vector
-        similarity_threshold: Minimum similarity score (default 0.55)
+        similarity_threshold: Minimum similarity score (default 0.35)
         limit: Maximum quotes to return
         excluded_quote_ids: Quote IDs to exclude (already used in recent digests)
 
@@ -100,7 +100,7 @@ def get_category_stats(category_embedding: list[float], excluded_quote_ids: set[
     """
     quotes = find_quotes_for_category(
         category_embedding,
-        similarity_threshold=0.55,
+        similarity_threshold=0.35,
         limit=100,
         excluded_quote_ids=excluded_quote_ids
     )
