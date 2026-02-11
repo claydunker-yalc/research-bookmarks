@@ -312,6 +312,89 @@ def _build_curator_email(
 """
 
 
+def generate_digest_for_category(category: dict, quotes_with_articles: list[dict]) -> dict | None:
+    """
+    Generate a digest using a specific category as the theme.
+
+    This is used when a user has requested a specific category - we use their
+    category name directly as the theme instead of deriving it from clusters.
+
+    Args:
+        category: Category dict with 'id', 'name', 'description', 'embedding'
+        quotes_with_articles: All quotes with article metadata
+
+    Returns:
+        dict with 'subject', 'html_body', and metadata, or None if not enough quotes
+    """
+    from .category_matcher import find_quotes_for_category
+
+    embedding = category.get('embedding')
+    if not embedding:
+        return None
+
+    # Find quotes matching this category
+    matching_quotes = find_quotes_for_category(
+        category_embedding=embedding,
+        similarity_threshold=0.50,  # Slightly lower threshold for requested categories
+        limit=20
+    )
+
+    if len(matching_quotes) < 3:
+        return None
+
+    # Check minimum unique articles
+    article_ids = set(q.get('article_id') for q in matching_quotes if q.get('article_id'))
+    if len(article_ids) < 2:
+        return None
+
+    # Use the category name as the theme
+    theme = category['name']
+
+    # Pick an anchor quote (highest similarity) and recent quotes
+    anchor = matching_quotes[0]
+    recent = matching_quotes[1:4]  # Next 3 quotes
+
+    # Build email using existing template style
+    anchor_quote = anchor.get('quote_text', '')
+    anchor_source = anchor.get('article_title', 'Untitled')
+    anchor_url = anchor.get('article_url', '#')
+
+    recent_quotes = [
+        {
+            'quote': q.get('quote_text', ''),
+            'source': q.get('article_title', 'Untitled'),
+            'url': q.get('article_url', '#')
+        }
+        for q in recent
+    ]
+
+    # Generate a tension/insight line
+    tension = f"You requested this theme: {theme}. These quotes from your library explore this topic."
+
+    html_body = _build_curator_email(
+        theme=theme,
+        anchor_quote=anchor_quote,
+        anchor_source=anchor_source,
+        anchor_url=anchor_url,
+        recent_quotes=recent_quotes,
+        tension=tension
+    )
+
+    subject = f"Curator's Pick: {theme}"
+
+    return {
+        "subject": subject,
+        "html_body": html_body,
+        "theme": theme,
+        "anchor_article": anchor_source,
+        "recent_count": len(recent_quotes),
+        "anchor_quote_id": anchor.get('id'),
+        "anchor_article_id": anchor.get('article_id'),
+        "cluster_quote_ids": [q['id'] for q in matching_quotes[:8]],  # Track used quotes
+        "category_id": category['id']
+    }
+
+
 # Keep the old function for backwards compatibility but mark deprecated
 def generate_digest(recent_articles: list[dict], rediscovery_articles: list[dict]) -> dict:
     """

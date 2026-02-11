@@ -68,16 +68,11 @@ class ArticleExport(BaseModel):
 class CategoryCreate(BaseModel):
     name: str
     description: str | None = None
-    digest_frequency: str = "weekly"  # 'weekly' or 'manual'
-    min_quotes_for_digest: int = 5
 
 
 class CategoryUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    is_active: bool | None = None
-    digest_frequency: str | None = None
-    min_quotes_for_digest: int | None = None
 
 
 class CategoryResponse(BaseModel):
@@ -85,9 +80,7 @@ class CategoryResponse(BaseModel):
     name: str
     description: str | None
     source: str  # 'discovered' or 'requested'
-    is_active: bool
-    digest_frequency: str
-    min_quotes_for_digest: int
+    status: str  # 'queued', 'pool', or 'inactive'
     last_digest_at: datetime | None
     created_at: datetime
 

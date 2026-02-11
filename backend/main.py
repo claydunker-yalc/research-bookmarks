@@ -34,14 +34,14 @@ from database import (
     get_all_articles_with_text,
     # Category functions
     get_all_categories,
-    get_active_categories,
+    get_queued_categories,
+    get_pool_categories,
+    move_category_to_pool,
     get_category_by_id,
     insert_category,
     update_category,
     delete_category,
     get_themes_from_digest_history,
-    get_recent_category_quote_ids,
-    save_category_digest_history,
     update_category_last_digest
 )
 from services import (
@@ -55,7 +55,7 @@ from services import (
     extract_quotes
 )
 from services.category_matcher import generate_category_embedding, get_category_stats
-from services.category_digest_generator import generate_category_digest
+from services.digest_generator import generate_digest_for_category
 from services.article_extractor import ExtractionError
 
 # Scheduler for periodic digest emails
@@ -97,14 +97,30 @@ def send_scheduled_digest():
             print("No quotes available for digest, skipping")
             return
 
-        # Get recently used anchor IDs to avoid repetition
-        excluded_anchors = get_recent_digest_anchor_ids(days=7)
+        digest = None
+        category_used = None
 
-        digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
+        # Check for queued categories first (user-requested themes get priority)
+        queued = get_queued_categories()
+        if queued:
+            category = queued[0]  # Oldest queued category
+            print(f"Found queued category: '{category['name']}'")
+
+            digest = generate_digest_for_category(category, quotes)
+            if digest:
+                category_used = category
+            else:
+                print(f"Not enough matching quotes for category '{category['name']}', using auto-discovery")
+
+        # If no queued category worked, use auto-discovery
+        if not digest:
+            excluded_anchors = get_recent_digest_anchor_ids(days=7)
+            digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
+
         if digest:
             send_digest_email(digest["subject"], digest["html_body"])
 
-            # Save to history to avoid repeating this theme
+            # Save to history
             save_digest_history(
                 theme=digest.get("theme"),
                 anchor_quote_id=digest.get("anchor_quote_id"),
@@ -112,56 +128,17 @@ def send_scheduled_digest():
                 cluster_quote_ids=digest.get("cluster_quote_ids", [])
             )
 
-            print(f"Curator digest sent: theme='{digest.get('theme')}', anchor='{digest.get('anchor_article')}'")
+            # If we used a queued category, move it to the pool
+            if category_used:
+                move_category_to_pool(category_used['id'])
+                update_category_last_digest(category_used['id'])
+                print(f"Category '{category_used['name']}' moved to pool")
+
+            print(f"Curator digest sent: theme='{digest.get('theme')}'")
         else:
             print("No suitable quote cluster found for digest")
     except Exception as e:
         print(f"Failed to send digest: {e}")
-
-
-def send_scheduled_category_digests():
-    """Background task to send digest emails for active weekly categories."""
-    if not is_email_configured():
-        print("Email not configured, skipping category digests")
-        return
-
-    try:
-        categories = get_active_categories(frequency='weekly')
-
-        if not categories:
-            print("No active weekly categories, skipping")
-            return
-
-        for category in categories:
-            try:
-                # Get recently used quote IDs for this category
-                excluded_quotes = get_recent_category_quote_ids(category['id'], days=30)
-
-                digest = generate_category_digest(category, excluded_quote_ids=excluded_quotes)
-
-                if digest:
-                    send_digest_email(digest["subject"], digest["html_body"])
-
-                    # Save history
-                    save_category_digest_history(
-                        category_id=category['id'],
-                        quote_ids=digest['quote_ids'],
-                        article_count=digest['article_count'],
-                        subject=digest['subject']
-                    )
-
-                    # Update last_digest_at
-                    update_category_last_digest(category['id'])
-
-                    print(f"Category digest sent: '{category['name']}'")
-                else:
-                    print(f"Not enough content for category '{category['name']}', skipping")
-
-            except Exception as e:
-                print(f"Failed to send digest for category '{category['name']}': {e}")
-
-    except Exception as e:
-        print(f"Failed to send category digests: {e}")
 
 
 @asynccontextmanager
@@ -169,6 +146,7 @@ async def lifespan(app: FastAPI):
     # Startup: start scheduler if email is configured
     if is_email_configured():
         # Schedule daily curator digest at 9:45 AM Central
+        # This now also processes queued categories with priority
         scheduler.add_job(
             send_scheduled_digest,
             CronTrigger(hour=9, minute=45, timezone=pytz.timezone('America/Chicago')),
@@ -176,20 +154,11 @@ async def lifespan(app: FastAPI):
             replace_existing=True
         )
 
-        # Schedule weekly category digests on Sundays at 10:00 AM Central
-        scheduler.add_job(
-            send_scheduled_category_digests,
-            CronTrigger(day_of_week='sun', hour=10, minute=0, timezone=pytz.timezone('America/Chicago')),
-            id="category_digests",
-            replace_existing=True
-        )
-
         scheduler.start()
-        print("Digest schedulers started:")
-        print("  - Curator digest: daily at 9:45 AM Central")
-        print("  - Category digests: Sundays at 10:00 AM Central")
+        print("Digest scheduler started: daily at 9:45 AM Central")
+        print("  (Queued categories get priority, then auto-discovery)")
     else:
-        print("Email not configured, digest schedulers not started")
+        print("Email not configured, digest scheduler not started")
     yield
     # Shutdown: stop scheduler
     if scheduler.running:
@@ -802,9 +771,7 @@ async def list_categories():
             name=cat['name'],
             description=cat.get('description'),
             source=cat.get('source', 'requested'),
-            is_active=cat.get('is_active', True),
-            digest_frequency=cat.get('digest_frequency', 'weekly'),
-            min_quotes_for_digest=cat.get('min_quotes_for_digest', 5),
+            status=cat.get('status', 'pool'),
             last_digest_at=cat.get('last_digest_at'),
             created_at=cat['created_at'],
             matching_quotes_count=stats['matching_quotes_count'],
@@ -834,6 +801,7 @@ async def create_category(category: CategoryCreate):
     """
     Create a new category.
     Generates an embedding from the name and description for semantic matching.
+    New categories start in 'queued' status and will be used in the next daily digest.
     """
     # Generate embedding for semantic matching
     embedding = generate_category_embedding(category.name, category.description)
@@ -843,9 +811,7 @@ async def create_category(category: CategoryCreate):
         "description": category.description,
         "embedding": embedding,
         "source": "requested",
-        "is_active": True,
-        "digest_frequency": category.digest_frequency,
-        "min_quotes_for_digest": category.min_quotes_for_digest
+        "status": "queued"  # New categories get priority in daily digest
     }
 
     saved = insert_category(category_data)
@@ -858,9 +824,7 @@ async def create_category(category: CategoryCreate):
         name=saved['name'],
         description=saved.get('description'),
         source=saved.get('source', 'requested'),
-        is_active=saved.get('is_active', True),
-        digest_frequency=saved.get('digest_frequency', 'weekly'),
-        min_quotes_for_digest=saved.get('min_quotes_for_digest', 5),
+        status=saved.get('status', 'queued'),
         last_digest_at=saved.get('last_digest_at'),
         created_at=saved['created_at']
     )
@@ -885,9 +849,7 @@ async def get_category(category_id: str):
         name=cat['name'],
         description=cat.get('description'),
         source=cat.get('source', 'requested'),
-        is_active=cat.get('is_active', True),
-        digest_frequency=cat.get('digest_frequency', 'weekly'),
-        min_quotes_for_digest=cat.get('min_quotes_for_digest', 5),
+        status=cat.get('status', 'pool'),
         last_digest_at=cat.get('last_digest_at'),
         created_at=cat['created_at'],
         matching_quotes_count=stats['matching_quotes_count'],
@@ -913,12 +875,6 @@ async def update_category_endpoint(category_id: str, updates: CategoryUpdate):
         update_data['name'] = updates.name
     if updates.description is not None:
         update_data['description'] = updates.description
-    if updates.is_active is not None:
-        update_data['is_active'] = updates.is_active
-    if updates.digest_frequency is not None:
-        update_data['digest_frequency'] = updates.digest_frequency
-    if updates.min_quotes_for_digest is not None:
-        update_data['min_quotes_for_digest'] = updates.min_quotes_for_digest
 
     # Regenerate embedding if name or description changed
     if 'name' in update_data or 'description' in update_data:
@@ -939,9 +895,7 @@ async def update_category_endpoint(category_id: str, updates: CategoryUpdate):
         name=updated['name'],
         description=updated.get('description'),
         source=updated.get('source', 'requested'),
-        is_active=updated.get('is_active', True),
-        digest_frequency=updated.get('digest_frequency', 'weekly'),
-        min_quotes_for_digest=updated.get('min_quotes_for_digest', 5),
+        status=updated.get('status', 'pool'),
         last_digest_at=updated.get('last_digest_at'),
         created_at=updated['created_at']
     )
@@ -965,7 +919,7 @@ async def delete_category_endpoint(category_id: str):
 
 @app.get("/categories/{category_id}/preview", response_model=CategoryDigestPreview)
 async def preview_category_digest(category_id: str):
-    """Preview what a category digest would contain without sending."""
+    """Preview what a category digest would contain when used in daily digest."""
     cat = get_category_by_id(category_id)
 
     if not cat:
@@ -981,16 +935,13 @@ async def preview_category_digest(category_id: str):
             sample_quotes=[]
         )
 
-    # Get excluded quotes
-    excluded = get_recent_category_quote_ids(category_id, days=30)
+    # Get stats for this category
+    stats = get_category_stats(cat['embedding'])
 
-    # Get stats
-    stats = get_category_stats(cat['embedding'], excluded_quote_ids=excluded)
-
-    min_quotes = cat.get('min_quotes_for_digest', 5)
+    # Can send if enough quotes from enough articles
     can_send = (
-        stats['matching_quotes_count'] >= min_quotes and
-        stats['matching_articles_count'] >= 3
+        stats['matching_quotes_count'] >= 3 and
+        stats['matching_articles_count'] >= 2
     )
 
     return CategoryDigestPreview(
@@ -1003,58 +954,6 @@ async def preview_category_digest(category_id: str):
     )
 
 
-@app.post("/categories/{category_id}/send")
-async def send_category_digest_endpoint(category_id: str):
-    """Manually trigger sending a category digest email."""
-    if not is_email_configured():
-        raise HTTPException(
-            status_code=400,
-            detail="Email not configured. Set RESEND_API_KEY and USER_EMAIL environment variables."
-        )
-
-    cat = get_category_by_id(category_id)
-
-    if not cat:
-        raise HTTPException(status_code=404, detail="Category not found")
-
-    if not cat.get('embedding'):
-        raise HTTPException(status_code=400, detail="Category has no embedding")
-
-    # Get excluded quotes
-    excluded = get_recent_category_quote_ids(category_id, days=30)
-
-    digest = generate_category_digest(cat, excluded_quote_ids=excluded)
-
-    if not digest:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough matching content. Need {cat.get('min_quotes_for_digest', 5)}+ quotes from 3+ articles."
-        )
-
-    try:
-        result = send_digest_email(digest["subject"], digest["html_body"])
-
-        # Save history
-        save_category_digest_history(
-            category_id=category_id,
-            quote_ids=digest['quote_ids'],
-            article_count=digest['article_count'],
-            subject=digest['subject']
-        )
-
-        # Update last_digest_at
-        update_category_last_digest(category_id)
-
-        return {
-            "success": True,
-            "message": f"Category digest sent for '{cat['name']}'",
-            "quotes_included": len(digest['quote_ids']),
-            "articles_included": digest['article_count'],
-            "email_id": result.get("id")
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 
 if __name__ == "__main__":

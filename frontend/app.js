@@ -620,13 +620,11 @@ const categoryForm = document.getElementById('category-form');
 const categoryModalTitle = document.getElementById('category-modal-title');
 const categoryNameInput = document.getElementById('category-name');
 const categoryDescInput = document.getElementById('category-description');
-const digestFrequencySelect = document.getElementById('digest-frequency');
 const cancelCategoryBtn = document.getElementById('cancel-category');
 const closeCategoryModalBtn = document.getElementById('close-category-modal');
 const previewModal = document.getElementById('preview-modal');
 const previewContent = document.getElementById('preview-content');
 const closePreviewModalBtn = document.getElementById('close-preview-modal');
-const sendDigestBtn = document.getElementById('send-digest-btn');
 
 let editingCategoryId = null;
 
@@ -683,11 +681,16 @@ function renderCategories(categories) {
     }
 
     categoriesEmpty.classList.add('hidden');
-    categoriesList.innerHTML = categories.map(cat => `
-        <div class="category-card ${!cat.is_active ? 'inactive' : ''}" data-id="${cat.id}">
+    categoriesList.innerHTML = categories.map(cat => {
+        // Display status as a badge
+        const statusLabel = cat.status === 'queued' ? 'Queued (next)' : 'In pool';
+        const statusClass = cat.status === 'queued' ? 'status-queued' : 'status-pool';
+
+        return `
+        <div class="category-card" data-id="${cat.id}">
             <div class="category-header">
                 <h3>${escapeHtml(cat.name)}</h3>
-                <span class="category-source" data-source="${cat.source}">${cat.source}</span>
+                <span class="category-status ${statusClass}">${statusLabel}</span>
             </div>
             ${cat.description ? `<p class="category-desc">${escapeHtml(cat.description)}</p>` : ''}
             <div class="category-stats">
@@ -695,21 +698,17 @@ function renderCategories(categories) {
                 <span>${cat.matching_articles_count} articles</span>
             </div>
             <div class="category-meta">
-                <span class="frequency">${cat.digest_frequency}</span>
                 ${cat.last_digest_at ?
-                    `<span class="last-sent">Last: ${formatDate(cat.last_digest_at)}</span>` :
-                    '<span class="last-sent">Never sent</span>'}
+                    `<span class="last-sent">Last used: ${formatDate(cat.last_digest_at)}</span>` :
+                    '<span class="last-sent">Not yet used</span>'}
             </div>
             <div class="category-actions">
                 <button class="preview-btn" data-id="${cat.id}">Preview</button>
                 <button class="edit-btn" data-id="${cat.id}">Edit</button>
-                <button class="send-btn" data-id="${cat.id}"
-                    ${cat.matching_quotes_count < cat.min_quotes_for_digest ? 'disabled' : ''}>
-                    Send Now
-                </button>
+                <button class="delete-btn" data-id="${cat.id}">Delete</button>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 
     // Add event listeners
     categoriesList.querySelectorAll('.preview-btn').forEach(btn => {
@@ -718,8 +717,8 @@ function renderCategories(categories) {
     categoriesList.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', () => editCategory(btn.dataset.id));
     });
-    categoriesList.querySelectorAll('.send-btn').forEach(btn => {
-        btn.addEventListener('click', () => sendCategoryDigest(btn.dataset.id));
+    categoriesList.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteCategory(btn.dataset.id));
     });
 }
 
@@ -756,7 +755,6 @@ function openCategoryModal(category = null) {
     if (category) {
         categoryNameInput.value = category.name;
         categoryDescInput.value = category.description || '';
-        digestFrequencySelect.value = category.digest_frequency;
     } else {
         categoryForm.reset();
     }
@@ -791,8 +789,7 @@ async function saveCategory(e) {
 
     const data = {
         name: categoryNameInput.value.trim(),
-        description: categoryDescInput.value.trim() || null,
-        digest_frequency: digestFrequencySelect.value
+        description: categoryDescInput.value.trim() || null
     };
 
     if (!data.name) {
@@ -836,8 +833,6 @@ async function saveCategory(e) {
 async function previewCategoryDigest(categoryId) {
     previewContent.innerHTML = '<div class="loading">Loading preview...</div>';
     previewModal.classList.remove('hidden');
-    sendDigestBtn.disabled = true;
-    sendDigestBtn.dataset.categoryId = categoryId;
 
     try {
         const response = await fetch(`${API_URL}/categories/${categoryId}/preview`);
@@ -848,12 +843,11 @@ async function previewCategoryDigest(categoryId) {
         if (!preview.can_send) {
             previewContent.innerHTML = `
                 <div class="preview-warning">
-                    <p>Not enough matching content for a digest.</p>
+                    <p>Not enough matching content for this category.</p>
                     <p>Found <strong>${preview.matching_quotes}</strong> quotes from <strong>${preview.matching_articles}</strong> articles.</p>
-                    <p>Minimum required: 5 quotes from 3 articles.</p>
+                    <p>Minimum required: 3 quotes from 2 articles.</p>
                 </div>
             `;
-            sendDigestBtn.disabled = true;
         } else {
             previewContent.innerHTML = `
                 <div class="preview-stats">
@@ -870,33 +864,35 @@ async function previewCategoryDigest(categoryId) {
                     `).join('')}
                 </div>
             `;
-            sendDigestBtn.disabled = false;
         }
     } catch (err) {
         previewContent.innerHTML = '<div class="error">Failed to load preview</div>';
     }
 }
 
-// Send category digest
-async function sendCategoryDigest(categoryId) {
-    const btn = document.querySelector(`.send-btn[data-id="${categoryId}"]`) || sendDigestBtn;
+// Delete category
+async function deleteCategory(categoryId) {
+    if (!confirm('Delete this category? It will be removed from the digest rotation.')) {
+        return;
+    }
+
+    const btn = document.querySelector(`.delete-btn[data-id="${categoryId}"]`);
     const originalText = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Sending...';
+    btn.textContent = 'Deleting...';
 
     try {
-        const response = await fetch(`${API_URL}/categories/${categoryId}/send`, {
-            method: 'POST'
+        const response = await fetch(`${API_URL}/categories/${categoryId}`, {
+            method: 'DELETE'
         });
 
         if (!response.ok) {
             const data = await response.json();
-            throw new Error(data.detail || 'Failed to send');
+            throw new Error(data.detail || 'Failed to delete');
         }
 
-        showToast('Digest sent successfully!');
-        previewModal.classList.add('hidden');
-        loadCategories(); // Refresh to show updated last_digest_at
+        showToast('Category deleted');
+        loadCategories();
     } catch (err) {
         showToast(err.message, 'error');
     } finally {
@@ -916,10 +912,6 @@ categoryForm.addEventListener('submit', saveCategory);
 cancelCategoryBtn.addEventListener('click', closeCategoryModal);
 closeCategoryModalBtn.addEventListener('click', closeCategoryModal);
 closePreviewModalBtn.addEventListener('click', closePreviewModal);
-sendDigestBtn.addEventListener('click', () => {
-    const categoryId = sendDigestBtn.dataset.categoryId;
-    if (categoryId) sendCategoryDigest(categoryId);
-});
 
 // Close category modals on Escape
 document.addEventListener('keydown', (e) => {

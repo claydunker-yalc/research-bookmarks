@@ -258,27 +258,45 @@ def get_all_articles_with_text() -> list[dict]:
 # Category functions
 
 def get_all_categories() -> list[dict]:
-    """Get all categories ordered by name."""
+    """Get all active categories ordered by name."""
     result = (
         supabase.table("categories")
         .select("*")
+        .neq("status", "inactive")
         .order("name")
         .execute()
     )
     return result.data
 
 
-def get_active_categories(frequency: str | None = None) -> list[dict]:
-    """Get active categories, optionally filtered by frequency."""
-    query = (
+def get_queued_categories() -> list[dict]:
+    """Get categories in the priority queue, ordered by creation date (oldest first)."""
+    result = (
         supabase.table("categories")
         .select("*")
-        .eq("is_active", True)
+        .eq("status", "queued")
+        .order("created_at")
+        .execute()
     )
-    if frequency:
-        query = query.eq("digest_frequency", frequency)
-    result = query.order("name").execute()
     return result.data
+
+
+def get_pool_categories() -> list[dict]:
+    """Get categories in the regular pool."""
+    result = (
+        supabase.table("categories")
+        .select("*")
+        .eq("status", "pool")
+        .order("name")
+        .execute()
+    )
+    return result.data
+
+
+def move_category_to_pool(category_id: str) -> bool:
+    """Move a category from queued to pool status after it's been used."""
+    result = update_category(category_id, {"status": "pool"})
+    return result is not None
 
 
 def get_category_by_id(category_id: str) -> dict | None:
@@ -309,8 +327,8 @@ def update_category(category_id: str, updates: dict) -> dict | None:
 
 
 def delete_category(category_id: str) -> bool:
-    """Soft delete a category by setting is_active=False."""
-    result = update_category(category_id, {"is_active": False})
+    """Soft delete a category by setting status='inactive'."""
+    result = update_category(category_id, {"status": "inactive"})
     return result is not None
 
 
