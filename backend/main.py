@@ -8,7 +8,7 @@ import pytz
 
 from models import (
     ArticleCreate, ArticleManualCreate, ArticleResponse, ArticleExport,
-    SearchRequest, SearchResult, SynthesizeRequest, SynthesisResponse,
+    ArticleUpdate, SearchRequest, SearchResult, SynthesizeRequest, SynthesisResponse,
     CategoryCreate, CategoryUpdate, CategoryResponse, CategoryWithStats,
     CategoryDigestPreview, DiscoveredTheme
 )
@@ -17,7 +17,10 @@ from database import (
     check_url_exists,
     insert_article,
     get_all_articles,
+    get_reading_list_articles,
     get_article_by_id,
+    update_article,
+    delete_article,
     search_by_embedding,
     get_articles_by_ids,
     get_recent_articles,
@@ -39,7 +42,7 @@ from database import (
     move_category_to_pool,
     get_category_by_id,
     insert_category,
-    update_category,
+    update_category as update_category_db,
     delete_category,
     get_themes_from_digest_history,
     update_category_last_digest
@@ -248,7 +251,8 @@ async def save_article(article: ArticleCreate, background_tasks: BackgroundTasks
         title=saved.get("title"),
         summary=saved.get("summary"),
         domain=saved.get("domain"),
-        created_at=saved["created_at"]
+        created_at=saved["created_at"],
+        in_reading_list=saved.get("in_reading_list", False)
     )
 
 
@@ -312,8 +316,27 @@ async def save_article_manual(article: ArticleManualCreate, background_tasks: Ba
         title=saved.get("title"),
         summary=saved.get("summary"),
         domain=saved.get("domain"),
-        created_at=saved["created_at"]
+        created_at=saved["created_at"],
+        in_reading_list=saved.get("in_reading_list", False)
     )
+
+
+@app.get("/articles/reading-list", response_model=list[ArticleResponse])
+async def list_reading_list(limit: int = 50, offset: int = 0):
+    """Get all articles in the reading list, ordered by newest first."""
+    articles = get_reading_list_articles(limit=limit, offset=offset)
+    return [
+        ArticleResponse(
+            id=a["id"],
+            url=a["url"],
+            title=a.get("title"),
+            summary=a.get("summary"),
+            domain=a.get("domain"),
+            created_at=a["created_at"],
+            in_reading_list=a.get("in_reading_list", False)
+        )
+        for a in articles
+    ]
 
 
 @app.get("/articles", response_model=list[ArticleResponse])
@@ -327,14 +350,15 @@ async def list_articles(limit: int = 50, offset: int = 0):
             title=a.get("title"),
             summary=a.get("summary"),
             domain=a.get("domain"),
-            created_at=a["created_at"]
+            created_at=a["created_at"],
+            in_reading_list=a.get("in_reading_list", False)
         )
         for a in articles
     ]
 
 
 @app.get("/articles/{article_id}", response_model=ArticleResponse)
-async def get_article(article_id: str):
+async def get_article_endpoint(article_id: str):
     """Get a single article by ID."""
     article = get_article_by_id(article_id)
     if not article:
@@ -346,8 +370,57 @@ async def get_article(article_id: str):
         title=article.get("title"),
         summary=article.get("summary"),
         domain=article.get("domain"),
-        created_at=article["created_at"]
+        created_at=article["created_at"],
+        in_reading_list=article.get("in_reading_list", False)
     )
+
+
+@app.patch("/articles/{article_id}", response_model=ArticleResponse)
+async def update_article_endpoint(article_id: str, updates: ArticleUpdate):
+    """Update an article's metadata (e.g., add/remove from reading list)."""
+    article = get_article_by_id(article_id)
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    update_data = {}
+
+    if updates.in_reading_list is not None:
+        update_data['in_reading_list'] = updates.in_reading_list
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No updates provided")
+
+    updated = update_article(article_id, update_data)
+
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update article")
+
+    return ArticleResponse(
+        id=updated["id"],
+        url=updated["url"],
+        title=updated.get("title"),
+        summary=updated.get("summary"),
+        domain=updated.get("domain"),
+        created_at=updated["created_at"],
+        in_reading_list=updated.get("in_reading_list", False)
+    )
+
+
+@app.delete("/articles/{article_id}")
+async def delete_article_endpoint(article_id: str):
+    """Permanently delete an article and its associated quotes."""
+    article = get_article_by_id(article_id)
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    success = delete_article(article_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete article")
+
+    return {"message": "Article deleted", "id": article_id}
 
 
 @app.post("/articles/export", response_model=list[ArticleExport])
@@ -375,7 +448,8 @@ async def export_articles(article_ids: list[str]):
             summary=a.get("summary"),
             clean_text=a.get("clean_text"),
             domain=a.get("domain"),
-            created_at=a["created_at"]
+            created_at=a["created_at"],
+            in_reading_list=a.get("in_reading_list", False)
         )
         for a in articles
     ]
@@ -401,7 +475,8 @@ async def search_articles(request: SearchRequest):
             summary=r.get("summary"),
             domain=r.get("domain"),
             created_at=r["created_at"],
-            similarity=r["similarity"]
+            similarity=r["similarity"],
+            in_reading_list=r.get("in_reading_list", False)
         )
         for r in results
     ]
@@ -885,7 +960,7 @@ async def update_category_endpoint(category_id: str, updates: CategoryUpdate):
     if not update_data:
         raise HTTPException(status_code=400, detail="No updates provided")
 
-    updated = update_category(category_id, update_data)
+    updated = update_category_db(category_id, update_data)
 
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to update category")

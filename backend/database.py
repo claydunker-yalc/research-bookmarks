@@ -22,7 +22,20 @@ def get_all_articles(limit: int = 50, offset: int = 0) -> list[dict]:
     """Get all articles, ordered by creation date (newest first)."""
     result = (
         supabase.table("articles")
-        .select("id, url, title, summary, domain, created_at")
+        .select("id, url, title, summary, domain, created_at, in_reading_list")
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+    return result.data
+
+
+def get_reading_list_articles(limit: int = 50, offset: int = 0) -> list[dict]:
+    """Get articles in the reading list, ordered by creation date (newest first)."""
+    result = (
+        supabase.table("articles")
+        .select("id, url, title, summary, domain, created_at, in_reading_list")
+        .eq("in_reading_list", True)
         .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
         .execute()
@@ -36,6 +49,32 @@ def get_article_by_id(article_id: str) -> dict | None:
     if result.data:
         return result.data[0]
     return None
+
+
+def update_article(article_id: str, updates: dict) -> dict | None:
+    """Update an existing article."""
+    result = (
+        supabase.table("articles")
+        .update(updates)
+        .eq("id", article_id)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def delete_article(article_id: str) -> bool:
+    """Hard delete an article and clean up related data."""
+    try:
+        # Clean up digest history references
+        supabase.table("digest_history").delete().eq("anchor_article_id", article_id).execute()
+
+        # Delete the article (quotes will cascade if FK is set, otherwise delete manually)
+        supabase.table("quotes").delete().eq("article_id", article_id).execute()
+        result = supabase.table("articles").delete().eq("id", article_id).execute()
+        return len(result.data) > 0 if result.data else False
+    except Exception as e:
+        print(f"Failed to delete article: {e}")
+        return False
 
 
 def search_by_embedding(query_embedding: list[float], limit: int = 10) -> list[dict]:

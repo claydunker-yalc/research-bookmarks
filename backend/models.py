@@ -19,6 +19,7 @@ class ArticleResponse(BaseModel):
     summary: str | None
     domain: str | None
     created_at: datetime
+    in_reading_list: bool = False
 
 
 class SearchRequest(BaseModel):
@@ -34,6 +35,7 @@ class SearchResult(BaseModel):
     domain: str | None
     created_at: datetime
     similarity: float
+    in_reading_list: bool = False
 
 
 class ErrorResponse(BaseModel):
@@ -61,6 +63,11 @@ class ArticleExport(BaseModel):
     clean_text: str | None
     domain: str | None
     created_at: datetime
+    in_reading_list: bool = False
+
+
+class ArticleUpdate(BaseModel):
+    in_reading_list: bool | None = None
 
 
 # Category models

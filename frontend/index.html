@@ -14,6 +14,7 @@
             <p class="subtitle">Save and search articles by meaning</p>
             <nav class="tab-nav">
                 <button class="tab-btn active" data-tab="main">Articles</button>
+                <button class="tab-btn" data-tab="reading-list">Reading List</button>
                 <button class="tab-btn" data-tab="categories">Categories</button>
                 <button class="tab-btn" data-tab="features">Features</button>
             </nav>
@@ -84,6 +85,19 @@
 
         </div><!-- End Main Tab -->
 
+        <!-- Reading List Tab Content -->
+        <div id="reading-list-tab" class="tab-content">
+            <section class="reading-list-section">
+                <h2>Reading List</h2>
+                <p class="subtitle">Articles you want to read later</p>
+                <div id="reading-list-results" class="results-grid"></div>
+                <div id="reading-list-loading" class="loading hidden">Loading...</div>
+                <div id="reading-list-empty" class="empty-state hidden">
+                    No articles in your reading list yet. Add articles from the Articles tab.
+                </div>
+            </section>
+        </div><!-- End Reading List Tab -->
+
         <!-- Categories Tab Content -->
         <div id="categories-tab" class="tab-content">
             <section class="categories-section">
@@ -145,6 +159,25 @@
                     <button class="close-btn" id="close-preview-modal">&times;</button>
                 </div>
                 <div id="preview-content"></div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div id="delete-modal" class="modal hidden">
+            <div class="modal-content delete-modal-content">
+                <div class="modal-header delete-header">
+                    <h2>Delete Article</h2>
+                    <button class="close-btn" id="close-delete-modal">&times;</button>
+                </div>
+                <div class="delete-body">
+                    <p>Are you sure you want to permanently delete this article?</p>
+                    <p class="delete-warning">This will also delete all extracted quotes. This action cannot be undone.</p>
+                    <p id="delete-article-title" class="delete-article-name"></p>
+                </div>
+                <div class="modal-footer delete-actions">
+                    <button type="button" class="secondary" id="cancel-delete">Cancel</button>
+                    <button type="button" class="danger-btn" id="confirm-delete">Delete</button>
+                </div>
             </div>
         </div>
 

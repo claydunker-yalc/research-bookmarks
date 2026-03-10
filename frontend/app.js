@@ -36,6 +36,20 @@ const toast = document.getElementById('toast');
 let selectedArticles = new Map(); // id -> article data
 let isSearchMode = false;
 
+// Reading list elements
+const readingListResults = document.getElementById('reading-list-results');
+const readingListLoading = document.getElementById('reading-list-loading');
+const readingListEmpty = document.getElementById('reading-list-empty');
+
+// Delete modal elements
+const deleteModal = document.getElementById('delete-modal');
+const deleteArticleTitle = document.getElementById('delete-article-title');
+const cancelDeleteBtn = document.getElementById('cancel-delete');
+const confirmDeleteBtn = document.getElementById('confirm-delete');
+const closeDeleteModalBtn = document.getElementById('close-delete-modal');
+
+let articleToDelete = null;
+
 // Toast notification
 function showToast(message, type = 'success') {
     toast.textContent = message;
@@ -198,6 +212,7 @@ function toggleArticleSelection(article, checkbox, card) {
 function renderArticle(article, showSimilarity = false) {
     const card = document.createElement('div');
     card.className = 'article-card';
+    card.dataset.articleId = article.id;
     if (selectedArticles.has(article.id)) {
         card.classList.add('selected');
     }
@@ -205,6 +220,7 @@ function renderArticle(article, showSimilarity = false) {
     const title = article.title || 'Untitled';
     const summary = article.summary || 'No summary available';
     const domain = article.domain || new URL(article.url).hostname;
+    const inReadingList = article.in_reading_list || false;
 
     let metaHtml = `
         <span class="domain">${domain}</span>
@@ -234,6 +250,21 @@ function renderArticle(article, showSimilarity = false) {
         checkboxHtml = `<input type="checkbox" class="select-checkbox" ${checked}>`;
     }
 
+    // Action buttons for all articles
+    const readingListBtnClass = inReadingList ? 'reading-list-btn in-list' : 'reading-list-btn';
+    const readingListBtnText = inReadingList ? 'In Reading List' : 'Add to Reading List';
+
+    const actionsHtml = `
+        <div class="article-actions">
+            <button class="${readingListBtnClass}" data-id="${article.id}" data-in-list="${inReadingList}">
+                ${readingListBtnText}
+            </button>
+            <button class="delete-article-btn" data-id="${article.id}" data-title="${escapeHtml(title)}">
+                Delete
+            </button>
+        </div>
+    `;
+
     card.innerHTML = `
         <div class="card-header">
             ${checkboxHtml}
@@ -242,6 +273,7 @@ function renderArticle(article, showSimilarity = false) {
                 <p class="summary">${summary}</p>
                 <div class="meta">${metaHtml}</div>
                 ${relevanceHtml}
+                ${actionsHtml}
             </div>
         </div>
     `;
@@ -256,11 +288,25 @@ function renderArticle(article, showSimilarity = false) {
 
         // Also allow clicking the card to select
         card.addEventListener('click', (e) => {
-            if (e.target.tagName !== 'A' && e.target.tagName !== 'INPUT') {
+            if (e.target.tagName !== 'A' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') {
                 toggleArticleSelection(article, checkbox, card);
             }
         });
     }
+
+    // Add reading list button handler
+    const readingListBtn = card.querySelector('.reading-list-btn');
+    readingListBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleReadingList(article.id, readingListBtn);
+    });
+
+    // Add delete button handler
+    const deleteBtn = card.querySelector('.delete-article-btn');
+    deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openDeleteModal(article.id, title);
+    });
 
     return card;
 }
@@ -464,6 +510,117 @@ function clearSelection() {
     updateSynthesisBar();
 }
 
+// ============ READING LIST FUNCTIONS ============
+
+async function toggleReadingList(articleId, button) {
+    const currentlyInList = button.dataset.inList === 'true';
+    const newStatus = !currentlyInList;
+
+    button.disabled = true;
+
+    try {
+        const response = await fetch(`${API_URL}/articles/${articleId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ in_reading_list: newStatus })
+        });
+
+        if (!response.ok) throw new Error('Failed to update article');
+
+        // Update button state
+        button.dataset.inList = newStatus.toString();
+        if (newStatus) {
+            button.classList.add('in-list');
+            button.textContent = 'In Reading List';
+            showToast('Added to reading list');
+        } else {
+            button.classList.remove('in-list');
+            button.textContent = 'Add to Reading List';
+            showToast('Removed from reading list');
+        }
+    } catch (err) {
+        showToast('Failed to update reading list', 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function loadReadingList() {
+    readingListLoading.classList.remove('hidden');
+    readingListResults.innerHTML = '';
+    readingListEmpty.classList.add('hidden');
+
+    try {
+        const response = await fetch(`${API_URL}/articles/reading-list`);
+        if (!response.ok) throw new Error('Failed to load reading list');
+
+        const articles = await response.json();
+
+        if (articles.length === 0) {
+            readingListEmpty.classList.remove('hidden');
+        } else {
+            articles.forEach(article => {
+                readingListResults.appendChild(renderArticle(article, false));
+            });
+        }
+    } catch (err) {
+        console.error('Failed to load reading list:', err);
+        readingListEmpty.textContent = 'Failed to load reading list. Please try again.';
+        readingListEmpty.classList.remove('hidden');
+    } finally {
+        readingListLoading.classList.add('hidden');
+    }
+}
+
+// ============ DELETE ARTICLE FUNCTIONS ============
+
+function openDeleteModal(articleId, title) {
+    articleToDelete = articleId;
+    deleteArticleTitle.textContent = title;
+    deleteModal.classList.remove('hidden');
+}
+
+function closeDeleteModal() {
+    deleteModal.classList.add('hidden');
+    articleToDelete = null;
+    deleteArticleTitle.textContent = '';
+}
+
+async function confirmDeleteArticle() {
+    if (!articleToDelete) return;
+
+    confirmDeleteBtn.disabled = true;
+    confirmDeleteBtn.textContent = 'Deleting...';
+
+    try {
+        const response = await fetch(`${API_URL}/articles/${articleToDelete}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || 'Failed to delete');
+        }
+
+        closeDeleteModal();
+        showToast('Article deleted');
+
+        // Remove the card from the DOM
+        const card = document.querySelector(`.article-card[data-article-id="${articleToDelete}"]`);
+        if (card) card.remove();
+
+        // Also remove from selection if selected
+        selectedArticles.delete(articleToDelete);
+        updateSynthesisBar();
+
+    } catch (err) {
+        showToast(err.message || 'Failed to delete article', 'error');
+    } finally {
+        confirmDeleteBtn.disabled = false;
+        confirmDeleteBtn.textContent = 'Delete';
+    }
+}
+
 // Event listeners
 searchForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -599,9 +756,12 @@ tabBtns.forEach(btn => {
             }
         });
 
-        // Load categories when tab is shown
+        // Load data when tabs are shown
         if (targetTab === 'categories') {
             loadCategories();
+        }
+        if (targetTab === 'reading-list') {
+            loadReadingList();
         }
     });
 });
@@ -913,7 +1073,7 @@ cancelCategoryBtn.addEventListener('click', closeCategoryModal);
 closeCategoryModalBtn.addEventListener('click', closeCategoryModal);
 closePreviewModalBtn.addEventListener('click', closePreviewModal);
 
-// Close category modals on Escape
+// Close modals on Escape
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         if (!categoryModal.classList.contains('hidden')) {
@@ -921,6 +1081,9 @@ document.addEventListener('keydown', (e) => {
         }
         if (!previewModal.classList.contains('hidden')) {
             closePreviewModal();
+        }
+        if (!deleteModal.classList.contains('hidden')) {
+            closeDeleteModal();
         }
     }
 });
@@ -932,5 +1095,13 @@ categoryModal.addEventListener('click', (e) => {
 previewModal.addEventListener('click', (e) => {
     if (e.target === previewModal) closePreviewModal();
 });
+deleteModal.addEventListener('click', (e) => {
+    if (e.target === deleteModal) closeDeleteModal();
+});
+
+// Delete modal event listeners
+cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+closeDeleteModalBtn.addEventListener('click', closeDeleteModal);
+confirmDeleteBtn.addEventListener('click', confirmDeleteArticle);
 
 loadAllArticles();

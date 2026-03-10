@@ -1083,3 +1083,120 @@ body.synthesis-active .container {
     margin: 1rem 0 0.5rem 0;
     color: #333;
 }
+
+/* ============ ARTICLE ACTIONS ============ */
+
+.article-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eee;
+}
+
+.article-actions button {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    border-radius: 4px;
+}
+
+.reading-list-btn {
+    background: transparent;
+    color: #667eea;
+    border: 1px solid #667eea;
+}
+
+.reading-list-btn:hover {
+    background: #667eea;
+    color: white;
+}
+
+.reading-list-btn.in-list {
+    background: #667eea;
+    color: white;
+}
+
+.reading-list-btn.in-list:hover {
+    background: #5a6fd6;
+}
+
+.delete-article-btn {
+    background: transparent;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+}
+
+.delete-article-btn:hover {
+    background: #dc2626;
+    color: white;
+}
+
+/* ============ READING LIST TAB ============ */
+
+.reading-list-section {
+    background: white;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.reading-list-section h2 {
+    margin-bottom: 0.25rem;
+}
+
+.reading-list-section .subtitle {
+    color: #666;
+    margin-bottom: 1.5rem;
+}
+
+/* ============ DELETE MODAL ============ */
+
+.delete-modal-content {
+    max-width: 450px;
+}
+
+.delete-header {
+    background: #dc2626 !important;
+}
+
+.delete-body {
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.delete-warning {
+    color: #dc2626;
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+}
+
+.delete-article-name {
+    font-weight: 600;
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: #f5f5f5;
+    border-radius: 4px;
+}
+
+.delete-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #eee;
+}
+
+.danger-btn {
+    background: #dc2626;
+    color: white;
+    border: none;
+}
+
+.danger-btn:hover {
+    background: #b91c1c;
+}
+
+.danger-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
