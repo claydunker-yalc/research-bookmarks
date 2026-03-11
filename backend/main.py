@@ -188,6 +188,13 @@ async def root():
     return {"message": "Research Bookmarks API", "version": "1.0.0"}
 
 
+@app.get("/health")
+async def health():
+    """Health check that keeps DB connection warm."""
+    count = get_article_count()
+    return {"status": "ok", "articles": count}
+
+
 @app.post("/articles", response_model=ArticleResponse)
 async def save_article(article: ArticleCreate, background_tasks: BackgroundTasks):
     """
