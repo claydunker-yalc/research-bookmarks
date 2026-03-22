@@ -2,9 +2,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-import pytz
 
 from models import (
     ArticleCreate, ArticleManualCreate, ArticleResponse, ArticleExport,
@@ -61,9 +58,6 @@ from services.category_matcher import generate_category_embedding, get_category_
 from services.digest_generator import generate_digest_for_category
 from services.article_extractor import ExtractionError
 
-# Scheduler for periodic digest emails
-scheduler = BackgroundScheduler(timezone=pytz.timezone('America/Chicago'))
-
 
 def extract_and_store_quotes(article_id: str, article_text: str, article_title: str):
     """Background task to extract quotes from an article and store them."""
@@ -86,86 +80,13 @@ def extract_and_store_quotes(article_id: str, article_text: str, article_title: 
         print(f"Quote extraction failed for {article_id}: {e}")
 
 
-def send_scheduled_digest():
-    """Background task to send curator's pick digest email."""
-    if not is_email_configured():
-        print("Email not configured, skipping digest")
-        return
-
-    try:
-        # Get all quotes with article metadata
-        quotes = get_all_quotes_with_articles()
-
-        if not quotes:
-            print("No quotes available for digest, skipping")
-            return
-
-        digest = None
-        category_used = None
-
-        # Check for queued categories first (user-requested themes get priority)
-        queued = get_queued_categories()
-        if queued:
-            category = queued[0]  # Oldest queued category
-            print(f"Found queued category: '{category['name']}'")
-
-            digest = generate_digest_for_category(category, quotes)
-            if digest:
-                category_used = category
-            else:
-                print(f"Not enough matching quotes for category '{category['name']}', using auto-discovery")
-
-        # If no queued category worked, use auto-discovery
-        if not digest:
-            excluded_anchors = get_recent_digest_anchor_ids(days=7)
-            digest = generate_curator_digest(quotes, excluded_anchor_ids=excluded_anchors)
-
-        if digest:
-            send_digest_email(digest["subject"], digest["html_body"])
-
-            # Save to history
-            save_digest_history(
-                theme=digest.get("theme"),
-                anchor_quote_id=digest.get("anchor_quote_id"),
-                anchor_article_id=digest.get("anchor_article_id"),
-                cluster_quote_ids=digest.get("cluster_quote_ids", [])
-            )
-
-            # If we used a queued category, move it to the pool
-            if category_used:
-                move_category_to_pool(category_used['id'])
-                update_category_last_digest(category_used['id'])
-                print(f"Category '{category_used['name']}' moved to pool")
-
-            print(f"Curator digest sent: theme='{digest.get('theme')}'")
-        else:
-            print("No suitable quote cluster found for digest")
-    except Exception as e:
-        print(f"Failed to send digest: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: start scheduler if email is configured
-    if is_email_configured():
-        # Schedule daily curator digest at 9:45 AM Central
-        # This now also processes queued categories with priority
-        scheduler.add_job(
-            send_scheduled_digest,
-            CronTrigger(hour=9, minute=45, timezone=pytz.timezone('America/Chicago')),
-            id="curator_digest",
-            replace_existing=True
-        )
-
-        scheduler.start()
-        print("Digest scheduler started: daily at 9:45 AM Central")
-        print("  (Queued categories get priority, then auto-discovery)")
-    else:
-        print("Email not configured, digest scheduler not started")
+    # Startup
+    print("Application started")
     yield
-    # Shutdown: stop scheduler
-    if scheduler.running:
-        scheduler.shutdown()
+    # Shutdown
+    print("Application shutdown")
 
 app = FastAPI(
     title="Research Bookmarks API",
@@ -523,13 +444,12 @@ async def synthesize(request: SynthesizeRequest):
 
 @app.get("/digest/status")
 async def digest_status():
-    """Check if email digest is configured and get scheduler status."""
+    """Check if email digest is configured."""
     return {
         "email_configured": is_email_configured(),
-        "scheduler_running": scheduler.running if scheduler else False,
         "total_articles": get_article_count(),
         "total_quotes": get_quote_count(),
-        "schedule": "Daily at 9:45 AM Central"
+        "schedule": "Scheduled via GitHub Actions: Mon, Wed, Fri at 9:45 AM Central"
     }
 
 
