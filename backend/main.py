@@ -109,7 +109,7 @@ async def root():
     return {"message": "Research Bookmarks API", "version": "1.0.0"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """Health check that keeps DB connection warm."""
     count = get_article_count()
