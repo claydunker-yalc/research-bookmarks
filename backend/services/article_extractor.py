@@ -43,7 +43,7 @@ def get_medium_proxy_url(url: str) -> str:
 
 def fetch_html(url: str) -> str:
     """Fetch HTML content from URL with retry logic."""
-    with httpx.Client(http2=True, follow_redirects=True, timeout=20) as client:
+    with httpx.Client(follow_redirects=True, timeout=20) as client:
         response = client.get(url, headers=HEADERS)
         response.raise_for_status()
         return response.text
