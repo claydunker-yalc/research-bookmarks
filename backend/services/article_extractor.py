@@ -1,6 +1,8 @@
 from urllib.parse import urlparse
 import re
+import ssl
 import httpx
+import certifi
 from newspaper import Article, ArticleException
 
 
@@ -43,7 +45,8 @@ def get_medium_proxy_url(url: str) -> str:
 
 def fetch_html(url: str) -> str:
     """Fetch HTML content from URL with retry logic."""
-    with httpx.Client(follow_redirects=True, timeout=20) as client:
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    with httpx.Client(follow_redirects=True, timeout=30, verify=ssl_context) as client:
         response = client.get(url, headers=HEADERS)
         response.raise_for_status()
         return response.text
