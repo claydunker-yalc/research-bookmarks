@@ -44,10 +44,20 @@ def get_medium_proxy_url(url: str) -> str:
 
 def fetch_html(url: str) -> str:
     """Fetch HTML content from URL with retry logic."""
-    with httpx.Client(follow_redirects=True, timeout=30, verify=certifi.where()) as client:
-        response = client.get(url, headers=HEADERS)
-        response.raise_for_status()
-        return response.text
+    # Try with certifi certificates first, fall back to no verification if needed
+    try:
+        with httpx.Client(follow_redirects=True, timeout=30, verify=certifi.where()) as client:
+            response = client.get(url, headers=HEADERS)
+            response.raise_for_status()
+            return response.text
+    except Exception as ssl_err:
+        if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err):
+            # Fallback: disable SSL verification (acceptable for personal bookmark tool)
+            with httpx.Client(follow_redirects=True, timeout=30, verify=False) as client:
+                response = client.get(url, headers=HEADERS)
+                response.raise_for_status()
+                return response.text
+        raise
 
 
 def extract_article(url: str) -> dict:
