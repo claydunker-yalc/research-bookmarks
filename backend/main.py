@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import traceback
 
 from models import (
     ArticleCreate, ArticleManualCreate, ArticleResponse, ArticleExport,
@@ -104,6 +105,18 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return detailed error."""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"{type(exc).__name__}: {str(exc)}",
+            "traceback": traceback.format_exc()
+        }
+    )
+
+
 @app.get("/")
 async def root():
     return {"message": "Research Bookmarks API", "version": "1.0.0"}
@@ -134,7 +147,7 @@ async def test_fetch(url: str = "https://example.com"):
 async def health():
     """Health check that keeps DB connection warm."""
     count = get_article_count()
-    return {"status": "ok", "articles": count, "version": "2024-04-06-v4-test-fetch"}
+    return {"status": "ok", "articles": count, "version": "2024-04-06-v5-global-handler"}
 
 
 @app.post("/articles", response_model=ArticleResponse)
