@@ -109,11 +109,32 @@ async def root():
     return {"message": "Research Bookmarks API", "version": "1.0.0"}
 
 
+@app.get("/test-fetch")
+async def test_fetch(url: str = "https://example.com"):
+    """Debug endpoint to test URL fetching."""
+    import httpx
+    try:
+        with httpx.Client(follow_redirects=True, timeout=30, verify=False) as client:
+            response = client.get(url)
+            return {
+                "status": "success",
+                "status_code": response.status_code,
+                "content_length": len(response.text),
+                "content_preview": response.text[:500]
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_message": str(e)
+        }
+
+
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """Health check that keeps DB connection warm."""
     count = get_article_count()
-    return {"status": "ok", "articles": count, "version": "2024-04-06-v3-debug"}
+    return {"status": "ok", "articles": count, "version": "2024-04-06-v4-test-fetch"}
 
 
 @app.post("/articles", response_model=ArticleResponse)
