@@ -113,7 +113,7 @@ async def root():
 async def health():
     """Health check that keeps DB connection warm."""
     count = get_article_count()
-    return {"status": "ok", "articles": count, "version": "2024-04-06-v2-no-ssl-verify"}
+    return {"status": "ok", "articles": count, "version": "2024-04-06-v3-debug"}
 
 
 @app.post("/articles", response_model=ArticleResponse)
@@ -130,24 +130,28 @@ async def save_article(article: ArticleCreate, background_tasks: BackgroundTasks
     """
     url = str(article.url)
 
-    existing = check_url_exists(url)
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "Article already exists",
-                "existing_article": {
-                    "id": existing["id"],
-                    "title": existing.get("title"),
-                    "created_at": existing.get("created_at")
-                }
-            }
-        )
-
     try:
+        existing = check_url_exists(url)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "Article already exists",
+                    "existing_article": {
+                        "id": existing["id"],
+                        "title": existing.get("title"),
+                        "created_at": existing.get("created_at")
+                    }
+                }
+            )
+
         extracted = extract_article(url)
+    except HTTPException:
+        raise
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {type(e).__name__}: {str(e)}")
 
     summary = generate_summary(extracted["clean_text"], extracted["title"])
 
