@@ -113,7 +113,7 @@ async def root():
 async def health():
     """Health check that keeps DB connection warm."""
     count = get_article_count()
-    return {"status": "ok", "articles": count, "version": "2024-04-06-ssl-fix"}
+    return {"status": "ok", "articles": count, "version": "2024-04-06-v2-no-ssl-verify"}
 
 
 @app.post("/articles", response_model=ArticleResponse)
